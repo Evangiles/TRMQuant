@@ -12,7 +12,7 @@ from tqdm.auto import tqdm
 from rl.data.preprocess import fit_standardizer, impute_series
 from rl.metrics import adjusted_sharpe
 from rl.utils.ema import EMAHelper
-from models.recursive_reasoning.trm_supervised import TRMSupervised, TRMSupervisedConfig
+from models.recursive_reasoning.trm_supervised_recursive import TRMSupervisedRecursive, TRMSupRecConfig
 
 
 class WindowDataset(Dataset):
@@ -139,14 +139,16 @@ def main():
     val_loader = DataLoader(val_set, batch_size=512, shuffle=False, pin_memory=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = TRMSupervised(
-        TRMSupervisedConfig(
+    model = TRMSupervisedRecursive(
+        TRMSupRecConfig(
             window_size=window,
             num_features=X.shape[1],
             hidden_size=256,
             num_heads=4,
             expansion=4.0,
             L_layers=2,
+            H_cycles=3,
+            L_cycles=4,
         )
     ).to(device)
 
