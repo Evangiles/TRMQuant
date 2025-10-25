@@ -167,6 +167,8 @@ class TRMPPOTemporalEncoder(nn.Module):
         new_carry, out = self.forward(carry, obs)
         mu, log_std, value = out["mu"], out["log_std"], out["value"]
 
+        # clamp log_std to avoid inf/NaN
+        log_std = torch.clamp(log_std, -5.0, 2.0)
         std = torch.exp(log_std)
         if deterministic:
             u = mu
@@ -177,6 +179,8 @@ class TRMPPOTemporalEncoder(nn.Module):
             base_log_prob = -0.5 * (((u - mu) / (std + 1e-8)) ** 2 + 2 * log_std + math.log(2 * math.pi))
 
         a_tanh, log_det = self._tanh_squash(u)
+        # clamp log_det to safe range
+        log_det = torch.clamp(log_det, min=-20.0, max=0.0)
         action = (a_tanh + 1.0)  # map (-1,1) -> (0,2)
         log_prob = (base_log_prob - log_det).sum(dim=-1, keepdim=False)
 

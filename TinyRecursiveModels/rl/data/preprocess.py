@@ -53,6 +53,15 @@ def impute_forward_back_fill(X: np.ndarray) -> np.ndarray:
     return df.to_numpy(dtype=np.float32)
 
 
+def impute_series(arr: np.ndarray) -> np.ndarray:
+    """FFill/BFill then median for a 1D array."""
+    s = pd.Series(arr)
+    s = s.ffill().bfill()
+    if s.isna().any():
+        s = s.fillna(s.median())
+    return s.to_numpy(dtype=np.float32)
+
+
 @dataclass
 class Standardizer:
     mean: np.ndarray

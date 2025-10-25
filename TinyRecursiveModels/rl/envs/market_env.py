@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Optional, Tuple, Dict
+from collections import deque
 
 import numpy as np
 
@@ -59,8 +60,12 @@ class MarketEnv:
         self._t0: int = 0
         self._t: int = 0
         self._t_end: int = 0
-        self._hist_strategy: list[float] = []
-        self._hist_market: list[float] = []
+        self._hist_strategy: deque[float] = deque(maxlen=self.config.vol_window)
+        self._hist_market: deque[float] = deque(maxlen=self.config.vol_window)
+        self._sum_s: float = 0.0
+        self._sum2_s: float = 0.0
+        self._sum_m: float = 0.0
+        self._sum2_m: float = 0.0
 
     @property
     def observation_shape(self) -> Tuple[int, int]:
@@ -80,6 +85,8 @@ class MarketEnv:
         self._t_end = end
         self._hist_strategy.clear()
         self._hist_market.clear()
+        self._sum_s = self._sum2_s = 0.0
+        self._sum_m = self._sum2_m = 0.0
         return self._obs_at(self._t)
 
     def step(self, action: float) -> Tuple[np.ndarray, float, bool, Dict]:
@@ -109,12 +116,33 @@ class MarketEnv:
                 strat_ret_t = strat_excess_t
                 mkt_ret_t = mkt_excess_t
 
-            self._hist_strategy.append(strat_ret_t)
-            self._hist_market.append(mkt_ret_t)
-            W = self.config.vol_window
-            if len(self._hist_market) >= W:
-                s_port = float(np.std(self._hist_strategy[-W:], ddof=1))
-                s_mkt = float(np.std(self._hist_market[-W:], ddof=1))
+            # rolling statistics O(1)
+            def _push(val, dq: deque, s_attr: str, s2_attr: str):
+                old = None
+                if len(dq) == dq.maxlen:
+                    old = dq[0]
+                dq.append(val)
+                # update sums
+                s = getattr(self, s_attr)
+                s2 = getattr(self, s2_attr)
+                if old is not None:
+                    s -= old
+                    s2 -= old * old
+                s += val
+                s2 += val * val
+                setattr(self, s_attr, s)
+                setattr(self, s2_attr, s2)
+
+            _push(strat_ret_t, self._hist_strategy, "_sum_s", "_sum2_s")
+            _push(mkt_ret_t, self._hist_market, "_sum_m", "_sum2_m")
+            n = len(self._hist_market)
+            if n >= self.config.vol_window:
+                mean_s = self._sum_s / n
+                var_s = max(0.0, self._sum2_s / n - mean_s * mean_s)
+                s_port = float(var_s ** 0.5)
+                mean_m = self._sum_m / n
+                var_m = max(0.0, self._sum2_m / n - mean_m * mean_m)
+                s_mkt = float(var_m ** 0.5)
                 cap = self.config.risk_cap_ratio
                 if s_mkt > 0.0:
                     penalty = lam * max(0.0, s_port - cap * s_mkt)

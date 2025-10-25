@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Tuple, Iterator
+from typing import Tuple, Iterator, Dict
 
 import numpy as np
 import torch
@@ -16,10 +16,10 @@ class PPOConfig:
     vf_coef: float = 0.5
     ent_coef: float = 0.01
     lr: float = 3e-4
-    rollout_steps: int = 4096
-    update_epochs: int = 10
+    rollout_steps: int = 1024
+    update_epochs: int = 6
     num_minibatches: int = 8
-    tbptt_len: int = 32
+    tbptt_len: int = 8
 
 
 class RolloutBuffer:
@@ -138,21 +138,25 @@ def ppo_update(policy: nn.Module, optimizer: torch.optim.Optimizer, buffer: Roll
             optimizer.step()
 
 
-def ppo_update_seq(policy: nn.Module, optimizer: torch.optim.Optimizer, buffer: RolloutBuffer, cfg: PPOConfig):
+def ppo_update_seq(policy: nn.Module, optimizer: torch.optim.Optimizer, buffer: RolloutBuffer, cfg: PPOConfig) -> Dict[str, float]:
     advantages = buffer.advantages
     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
+    # metric accumulators
+    agg = dict(policy_loss=0.0, value_loss=0.0, entropy=0.0, clip_frac=0.0, adv_mean=0.0, adv_std=0.0)
+    batches = 0
 
     for _ in range(cfg.update_epochs):
         for obs_seq, act_seq, ret_seq, adv_seq, val_seq, logp_seq, mask_seq in buffer.get_sequence_minibatches(cfg.tbptt_len, cfg.num_minibatches):
             B, L, T, F = obs_seq.shape
             device = next(policy.parameters()).device
-            obs_seq = obs_seq.to(device)
-            act_seq = act_seq.to(device)
-            ret_seq = ret_seq.to(device)
-            adv_seq = adv_seq.to(device)
-            val_seq = val_seq.to(device)
-            logp_seq = logp_seq.to(device)
-            mask_seq = mask_seq.to(device)
+            obs_seq = obs_seq.to(device, non_blocking=True)
+            act_seq = act_seq.to(device, non_blocking=True)
+            ret_seq = ret_seq.to(device, non_blocking=True)
+            adv_seq = adv_seq.to(device, non_blocking=True)
+            val_seq = val_seq.to(device, non_blocking=True)
+            logp_seq = logp_seq.to(device, non_blocking=True)
+            mask_seq = mask_seq.to(device, non_blocking=True)
 
             carry = policy.initial_carry(batch_size=B)
             logp_preds = []
@@ -173,7 +177,9 @@ def ppo_update_seq(policy: nn.Module, optimizer: torch.optim.Optimizer, buffer: 
             logp_preds = torch.stack(logp_preds, dim=1)  # [B,L]
             value_preds = torch.stack(value_preds, dim=1)  # [B,L]
 
-            ratio = torch.exp(logp_preds - logp_seq)
+            # stabilize ratio by clipping log prob difference
+            dlogp = torch.clamp(logp_preds - logp_seq, min=-20.0, max=20.0)
+            ratio = torch.exp(dlogp)
             surr1 = ratio * adv_seq
             surr2 = torch.clamp(ratio, 1.0 - cfg.clip_eps, 1.0 + cfg.clip_eps) * adv_seq
             policy_loss = -torch.min(surr1, surr2)
@@ -189,11 +195,31 @@ def ppo_update_seq(policy: nn.Module, optimizer: torch.optim.Optimizer, buffer: 
             entropy_bonus = -(torch.exp(logp_preds) * logp_preds)
             entropy_bonus = (entropy_bonus * mask_seq).sum() / (mask_seq.sum() + 1e-8)
 
+            # clip fraction
+            clip_frac = ((ratio - 1.0).abs() > cfg.clip_eps).to(torch.float32)
+            clip_frac = (clip_frac * mask_seq).sum() / (mask_seq.sum() + 1e-8)
+
             loss = policy_loss + cfg.vf_coef * value_loss - cfg.ent_coef * entropy_bonus
 
             optimizer.zero_grad()
             loss.backward()
             nn.utils.clip_grad_norm_(policy.parameters(), max_norm=1.0)
             optimizer.step()
+
+            # accumulate metrics
+            agg['policy_loss'] += float(policy_loss.detach().cpu())
+            agg['value_loss'] += float(value_loss.detach().cpu())
+            agg['entropy'] += float(entropy_bonus.detach().cpu())
+            agg['clip_frac'] += float(clip_frac.detach().cpu())
+            agg['adv_mean'] += float((adv_seq * mask_seq).sum().cpu() / (mask_seq.sum().cpu() + 1e-8))
+            # std over masked entries
+            adv_masked = adv_seq[mask_seq.bool()]
+            agg['adv_std'] += float(adv_masked.std().cpu()) if adv_masked.numel() > 1 else 0.0
+            batches += 1
+
+    if batches > 0:
+        for k in agg:
+            agg[k] /= batches
+    return agg
 
 

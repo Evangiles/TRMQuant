@@ -5,8 +5,9 @@ import torch
 from torch import nn
 from torch.optim import Adam
 from torch.optim.lr_scheduler import CosineAnnealingLR
+from tqdm.auto import tqdm
 
-from rl.data.preprocess import load_market_csv, impute_forward_back_fill, fit_standardizer
+from rl.data.preprocess import load_market_csv, impute_forward_back_fill, fit_standardizer, impute_series
 from rl.envs.market_env import MarketEnv, MarketEnvConfig
 from rl.ppo import RolloutBuffer, PPOConfig, ppo_update_seq
 from rl.metrics import adjusted_sharpe
@@ -24,6 +25,11 @@ def main():
     split_idx = int(len(X) * 0.8)
     stdzr = fit_standardizer(X[:split_idx])
     X = stdzr.transform(X)
+
+    # Impute targets, too, to avoid NaNs in reward/metric
+    fwd = impute_series(fwd)
+    rf = impute_series(rf)
+    mkt_excess = impute_series(mkt_excess)
 
     env = MarketEnv(
         features=X,
@@ -45,13 +51,13 @@ def main():
         TRMPPOConfig(
             window_size=env.config.window_size,
             num_features=X.shape[1],
-            hidden_size=512,
-            num_heads=8,
+            hidden_size=128,
+            num_heads=4,
             expansion=4.0,
             pos_encodings="rope",
             H_cycles=3,
-            L_cycles=6,
-            L_layers=2,
+            L_cycles=4,
+            L_layers=1,
         )
     ).to(device)
 
@@ -68,10 +74,11 @@ def main():
     buffer = RolloutBuffer(obs_shape=env.observation_shape, capacity=cfg.rollout_steps)
 
     # training loop (single-episode per split)
-    NUM_EPOCHS = 50
+    NUM_EPOCHS = 1
     best_val = -1e9
     best_path = os.path.join("TinyRecursiveModels", "checkpoints_trmppo.pt")
 
+    epoch_pbar = tqdm(total=NUM_EPOCHS, desc="Epochs", leave=True, dynamic_ncols=True, mininterval=0.2)
     for epoch in range(NUM_EPOCHS):
         for split in ("train", "val"):
             obs = env.reset(split=split)
@@ -83,8 +90,22 @@ def main():
             fwd_list = []
             rf_list = []
             buffer.ptr = 0
+            # progress for current split
+            try:
+                total_steps_split = int(env._splits[split][1] - env._splits[split][0] + 1)
+            except Exception:
+                total_steps_split = 0
+            split_pbar = tqdm(
+                total=total_steps_split if total_steps_split>0 else None,
+                desc=f"Epoch {epoch+1} {split}",
+                leave=False,
+                dynamic_ncols=True,
+                mininterval=0.1,
+            )
+
             while not done:
-                obs_t = torch.from_numpy(obs).unsqueeze(0).to(device)
+                # avoid reallocating tensors each step
+                obs_t = torch.as_tensor(obs, device=device).unsqueeze(0)
                 with torch.no_grad():
                     carry, action, logprob, value = policy.act(carry, obs_t, deterministic=False)
                 a = float(action.squeeze(0).cpu().numpy())
@@ -107,6 +128,7 @@ def main():
 
                 obs = next_obs
                 step += 1
+                split_pbar.update(1)
 
                 if split == "train" and (buffer.ptr >= cfg.rollout_steps or done):
                     # bootstrap with last value
@@ -114,14 +136,18 @@ def main():
                         last_value = 0.0
                     else:
                         with torch.no_grad():
-                            _, _, _, last_value_t = policy.act(carry, torch.from_numpy(obs).unsqueeze(0).to(device), deterministic=True)
+                            _, _, _, last_value_t = policy.act(carry, torch.as_tensor(obs, device=device).unsqueeze(0), deterministic=True)
                             last_value = float(last_value_t.squeeze(0).cpu())
                     buffer.compute_gae(last_value=last_value, gamma=cfg.gamma, lam=cfg.gae_lambda)
-                    ppo_update_seq(policy, optimizer, buffer, cfg)
+                    metrics = ppo_update_seq(policy, optimizer, buffer, cfg)
+                    # print short training metrics summary every PPO update
+                    if metrics:
+                        print(f"PPO: pol_loss={metrics['policy_loss']:.4f} val_loss={metrics['value_loss']:.4f} ent={metrics['entropy']:.4f} clip={metrics['clip_frac']:.3f}")
                     if ema is not None:
                         ema.update(policy)
                     buffer.ptr = 0
 
+            split_pbar.close()
             # Evaluate adjusted sharpe at split end
             try:
                 import pandas as pd
@@ -141,6 +167,8 @@ def main():
                 print(f"Metric computation failed ({split}): {e}")
 
         scheduler.step()
+        epoch_pbar.update(1)
+    epoch_pbar.close()
 
 
 if __name__ == "__main__":
