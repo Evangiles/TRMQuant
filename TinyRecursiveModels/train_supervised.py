@@ -199,7 +199,6 @@ def main():
             allocs = np.concatenate(allocs, axis=0)
 
         # build solution df aligned to val horizon
-        import pandas as pd
         start = window + n_train
         fwd_val = fwd[start: start + len(allocs)].astype(np.float64)
         rf_val = rf[start: start + len(allocs)].astype(np.float64)
