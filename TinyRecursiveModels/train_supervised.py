@@ -1,5 +1,7 @@
 import os
+import argparse
 import numpy as np
+import pandas as pd
 import torch
 from torch import nn
 from torch.utils.data import Dataset, DataLoader
@@ -7,7 +9,7 @@ from torch.optim import Adam
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from tqdm.auto import tqdm
 
-from rl.data.preprocess import load_market_csv, impute_forward_back_fill, fit_standardizer, impute_series
+from rl.data.preprocess import fit_standardizer, impute_series
 from rl.metrics import adjusted_sharpe
 from rl.utils.ema import EMAHelper
 from models.recursive_reasoning.trm_supervised import TRMSupervised, TRMSupervisedConfig
@@ -41,21 +43,72 @@ def build_targets_zscore(mkt_excess: np.ndarray, window: int, k: float = 0.5) ->
 
 
 def main():
-    csv_path = os.path.join("TinyRecursiveModels", "train.csv")
-    date_id, X, fwd, rf, mkt_excess, feat_names = load_market_csv(csv_path)
+    parser = argparse.ArgumentParser(description="Supervised allocation training with ablations")
+    parser.add_argument("--path", type=str, default=os.path.join("TinyRecursiveModels", "train.csv"))
+    parser.add_argument("--window", type=int, default=60)
+    parser.add_argument("--drop_high_missing", type=int, default=0, help="1 to drop columns with missing ratio >= threshold")
+    parser.add_argument("--drop_threshold", type=float, default=0.6)
+    parser.add_argument("--impute", type=str, default="ffill", choices=["ffill", "zero_flag"])
+    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--seed", type=int, default=42)
+    args = parser.parse_args()
 
-    # impute features and targets
-    X = impute_forward_back_fill(X)
-    fwd = impute_series(fwd)
-    rf = impute_series(rf)
-    mkt_excess = impute_series(mkt_excess)
+    rng = np.random.default_rng(args.seed)
+    torch.manual_seed(args.seed)
 
-    # standardize features on train split only
+    # load full dataframe
+    df = pd.read_csv(args.path)
+    cols = list(df.columns)
+    date_idx = cols.index("date_id")
+    target_cols = ["forward_returns", "risk_free_rate", "market_forward_excess_returns"]
+    first_target = min(cols.index(c) for c in target_cols)
+    feature_cols = cols[date_idx + 1:first_target]
+
+    # missing ratio
+    miss_ratio = df[feature_cols].isna().mean()
+    drop_set = set()
+    if args.drop_high_missing:
+        drop_set = set(miss_ratio[miss_ratio >= args.drop_threshold].index.tolist())
+        feature_cols = [c for c in feature_cols if c not in drop_set]
+
+    # imputation
+    X_df = df[feature_cols].copy()
+    flag_cols = []
+    if args.impute == "ffill":
+        X_df = X_df.ffill().bfill()
+        med = X_df.median(numeric_only=True)
+        X_df = X_df.fillna(med)
+    else:  # zero_flag
+        for c in feature_cols:
+            if pd.api.types.is_numeric_dtype(X_df[c]):
+                flag = X_df[c].isna().astype(float)
+                flag_name = f"{c}_nan"
+                X_df[flag_name] = flag
+                flag_cols.append(flag_name)
+        X_df = X_df.fillna(0.0)
+
+    # targets
+    fwd = impute_series(pd.to_numeric(df["forward_returns"], errors="coerce").to_numpy())
+    rf = impute_series(pd.to_numeric(df["risk_free_rate"], errors="coerce").to_numpy())
+    mkt_excess = impute_series(pd.to_numeric(df["market_forward_excess_returns"], errors="coerce").to_numpy())
+
+    X = X_df.to_numpy(dtype=np.float32)
+
+    # standardize features on train split only (exclude flag columns)
     split_idx = int(len(X) * 0.8)
-    stdzr = fit_standardizer(X[:split_idx])
-    X = stdzr.transform(X)
+    if args.impute == "zero_flag" and len(flag_cols):
+        base_cols = [i for i, c in enumerate(X_df.columns) if c not in flag_cols]
+        flag_idx = [i for i, c in enumerate(X_df.columns) if c in flag_cols]
+        X_base = X[:, base_cols]
+        X_flag = X[:, flag_idx] if len(flag_idx) else np.empty((len(X), 0), dtype=np.float32)
+        stdzr = fit_standardizer(X_base[:split_idx])
+        X_base = stdzr.transform(X_base)
+        X = np.concatenate([X_base, X_flag], axis=1)
+    else:
+        stdzr = fit_standardizer(X[:split_idx])
+        X = stdzr.transform(X)
 
-    window = 60
+    window = args.window
     # build windows and z-score targets
     targets = build_targets_zscore(mkt_excess, window=window, k=0.5)
     ds = WindowDataset(X, window)
@@ -109,7 +162,7 @@ def main():
 
     best = -1e9
     best_path = os.path.join("TinyRecursiveModels", "checkpoints_supervised.pt")
-    EPOCHS = 50
+    EPOCHS = args.epochs
 
     for epoch in range(EPOCHS):
         model.train()
