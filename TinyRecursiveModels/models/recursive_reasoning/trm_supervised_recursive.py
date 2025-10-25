@@ -14,9 +14,9 @@ class TRMSupRecConfig(BaseModel):
     num_heads: int = 4
     expansion: float = 4.0
     pos_encodings: str = "rope"  # "rope" | "learned"
-    L_layers: int = 2
-    H_cycles: int = 3
-    L_cycles: int = 4
+    L_layers: int = 1
+    H_cycles: int = 4
+    L_cycles: int = 6
     rms_norm_eps: float = 1e-5
     rope_theta: float = 10000.0
     forward_dtype: str = "bfloat16"

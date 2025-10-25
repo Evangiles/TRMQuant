@@ -146,9 +146,9 @@ def main():
             hidden_size=256,
             num_heads=4,
             expansion=4.0,
-            L_layers=2,
-            H_cycles=3,
-            L_cycles=4,
+            L_layers=1,
+            H_cycles=4,
+            L_cycles=6,
         )
     ).to(device)
 
