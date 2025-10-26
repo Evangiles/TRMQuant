@@ -34,6 +34,9 @@ class VPSDE:
 
     def get_alpha(self, t_idx: torch.Tensor) -> torch.Tensor:
         """Get alpha_cumprod for discrete timestep index."""
+        # Index on CPU, preserve device of result
+        if t_idx.is_cuda:
+            return self.alphas_cumprod[t_idx.cpu()].to(t_idx.device)
         return self.alphas_cumprod[t_idx]
 
     def forward_diffusion(
@@ -56,8 +59,8 @@ class VPSDE:
         if noise is None:
             noise = torch.randn_like(x0)
 
-        # Get alpha for this timestep
-        alpha = self.alphas_cumprod[t_idx].to(x0.device)
+        # Get alpha for this timestep (index on CPU, then move to device)
+        alpha = self.alphas_cumprod[t_idx.cpu()].to(x0.device)
 
         # Reshape for broadcasting [B, 1]
         alpha = alpha.view(-1, 1)
@@ -91,6 +94,7 @@ class VPSDE:
         if t_idx == 0:
             return x_t
 
+        # Index on CPU for compatibility
         beta_t = self.betas[t_idx].to(x_t.device)
         alpha_t = self.alphas_cumprod[t_idx].to(x_t.device)
 

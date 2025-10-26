@@ -115,8 +115,9 @@ def train_step(
     alpha_t = sde.get_alpha(t_idx).unsqueeze(-1)
     score_target = -noise / torch.sqrt(1.0 - alpha_t)
 
-    # Weighted MSE loss
-    loss = (1.0 - alpha_t) * nn.functional.mse_loss(score_pred, score_target)
+    # Weighted MSE loss (reduction='none' for proper per-sample weighting)
+    loss_per_sample = nn.functional.mse_loss(score_pred, score_target, reduction='none')  # [B, L]
+    loss = ((1.0 - alpha_t) * loss_per_sample.mean(dim=-1)).mean()  # scalar
 
     # Backward
     optimizer.zero_grad()
@@ -167,8 +168,9 @@ def validate(
         alpha_t = sde.get_alpha(t_idx).unsqueeze(-1)
         score_target = -noise / torch.sqrt(1.0 - alpha_t)
 
-        # Loss
-        loss = (1.0 - alpha_t) * nn.functional.mse_loss(score_pred, score_target)
+        # Loss (proper weighting)
+        loss_per_sample = nn.functional.mse_loss(score_pred, score_target, reduction='none')
+        loss = ((1.0 - alpha_t) * loss_per_sample.mean(dim=-1)).mean()
 
         total_loss += float(loss.cpu()) * B
         count += B
