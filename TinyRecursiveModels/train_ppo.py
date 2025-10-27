@@ -116,7 +116,13 @@ def main():
         policy.load_state_dict(state, strict=False)
         print("Warm start loaded successfully")
 
-    cfg = PPOConfig(tbptt_len=32)
+    cfg = PPOConfig(
+        tbptt_len=32,
+        lr=args.lr,
+        ent_coef=0.05,  # Increase entropy to prevent collapse
+        clip_eps=0.2,
+        vf_coef=0.5,
+    )
     optimizer = Adam(policy.parameters(), lr=args.lr)
     scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=args.lr * 0.1)
 
@@ -171,14 +177,16 @@ def main():
                 fwd_list.append(float(fwd[t_idx]))
                 rf_list.append(float(rf[t_idx]))
 
-                buffer.add(
-                    torch.from_numpy(obs),
-                    torch.tensor(a, dtype=torch.float32),
-                    torch.tensor(reward, dtype=torch.float32),
-                    torch.tensor(done, dtype=torch.bool),
-                    value.squeeze(0).cpu(),
-                    logprob.squeeze(0).cpu(),
-                )
+                # Only add to buffer during training
+                if split == "train":
+                    buffer.add(
+                        torch.from_numpy(obs),
+                        torch.tensor(a, dtype=torch.float32),
+                        torch.tensor(reward, dtype=torch.float32),
+                        torch.tensor(done, dtype=torch.bool),
+                        value.squeeze(0).cpu(),
+                        logprob.squeeze(0).cpu(),
+                    )
 
                 obs = next_obs
                 step += 1
