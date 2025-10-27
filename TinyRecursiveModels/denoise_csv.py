@@ -12,10 +12,10 @@ from models.diffusion.losses import tv_gradient, fourier_gradient
 
 
 @torch.no_grad()
-def denoise_window(
+def denoise_windows_batch(
     model: FinancialDenoiser,
     sde: VPSDE,
-    x0: torch.Tensor,
+    x0_batch: torch.Tensor,
     T_prime: int = 500,
     n_seeds: int = 5,
     corrector_steps: int = 1,
@@ -24,12 +24,12 @@ def denoise_window(
     omega: float = 1.0,
     device: torch.device = torch.device('cpu'),
 ) -> torch.Tensor:
-    """Denoise a single window using noising-denoising procedure.
+    """Denoise batch of windows using noising-denoising procedure.
 
     Args:
         model: Trained denoiser
         sde: VP-SDE instance
-        x0: Input window [L]
+        x0_batch: Input windows [B, L]
         T_prime: Noising level (< num_timesteps)
         n_seeds: Number of random seeds for averaging
         corrector_steps: Langevin MCMC steps
@@ -39,11 +39,11 @@ def denoise_window(
         device: Device
 
     Returns:
-        x_denoised: Denoised window [L]
+        x_denoised: Denoised windows [B, L]
     """
     model.eval()
-    x0 = x0.to(device)
-    L = x0.shape[0]
+    x0_batch = x0_batch.to(device)
+    B, L = x0_batch.shape
 
     denoised_list = []
 
@@ -51,50 +51,46 @@ def denoise_window(
         torch.manual_seed(seed)
 
         # Step 1: Forward noising to T_prime
-        t_idx = torch.tensor([T_prime], device=device)
-        x_t, _ = sde.forward_diffusion(x0.unsqueeze(0), t_idx)
-        x_t = x_t.squeeze(0)  # [L]
+        t_idx = torch.full((B,), T_prime, device=device, dtype=torch.long)
+        x_t, _ = sde.forward_diffusion(x0_batch, t_idx)  # [B, L]
 
         # Step 2: Reverse denoising from T_prime to 0
         for i in range(T_prime, 0, -1):
-            t = torch.tensor([float(i)], device=device)
-            t_idx = torch.tensor([i], device=device)
+            t = torch.full((B,), float(i), device=device)
+            t_idx = torch.full((B,), i, device=device, dtype=torch.long)
 
             # Predictor step (with CFG)
-            x_t_batch = x_t.unsqueeze(0)  # [1, L]
-            c_batch = x0.unsqueeze(0)     # [1, L]
-
             # Conditional score
-            score_cond = model(x_t_batch, t, c_batch).squeeze(0)
+            score_cond = model(x_t, t, x0_batch)  # [B, L]
 
             # Unconditional score
-            score_uncond = model(x_t_batch, t, torch.zeros_like(c_batch)).squeeze(0)
+            score_uncond = model(x_t, t, torch.zeros_like(x0_batch))  # [B, L]
 
             # CFG
             score = omega * score_cond + (1.0 - omega) * score_uncond
 
             # VP-SDE predictor
-            x_t = sde.reverse_step(x_t.unsqueeze(0), i, score.unsqueeze(0)).squeeze(0)
+            x_t = sde.reverse_step(x_t, i, score)  # [B, L]
 
             # Corrector steps
             for _ in range(corrector_steps):
-                score = model(x_t.unsqueeze(0), t, c_batch).squeeze(0)
-                x_t = sde.corrector_step(x_t.unsqueeze(0), score.unsqueeze(0), step_size=2e-5).squeeze(0)
+                score = model(x_t, t, x0_batch)  # [B, L]
+                x_t = sde.corrector_step(x_t, score, step_size=2e-5)  # [B, L]
 
             # TV loss guidance
             if eta_tv > 0:
-                grad_tv = tv_gradient(x_t.unsqueeze(0)).squeeze(0)
+                grad_tv = tv_gradient(x_t)  # [B, L]
                 x_t = x_t - eta_tv * grad_tv
 
             # Fourier loss guidance
             if eta_fourier > 0:
-                grad_f = fourier_gradient(x_t.unsqueeze(0), c_batch, threshold=0.1).squeeze(0)
+                grad_f = fourier_gradient(x_t, x0_batch, threshold=0.1)  # [B, L]
                 x_t = x_t - eta_fourier * grad_f
 
-        denoised_list.append(x_t.cpu())
+        denoised_list.append(x_t)  # Keep on GPU
 
-    # Average over seeds
-    x_denoised = torch.stack(denoised_list).mean(dim=0)
+    # Average over seeds on GPU
+    x_denoised = torch.stack(denoised_list).mean(dim=0)  # [B, L]
 
     return x_denoised
 
@@ -105,9 +101,10 @@ def denoise_feature_column(
     feature_series: np.ndarray,
     window_size: int = 60,
     stride: int = 1,
+    batch_size: int = 32,
     **denoise_kwargs,
 ) -> np.ndarray:
-    """Denoise entire feature column using rolling windows.
+    """Denoise entire feature column using batched rolling windows.
 
     Args:
         model: Trained denoiser
@@ -115,40 +112,61 @@ def denoise_feature_column(
         feature_series: [T] feature time series
         window_size: Window size
         stride: Stride for rolling windows
-        **denoise_kwargs: Arguments for denoise_window
+        batch_size: Number of windows to process in parallel
+        **denoise_kwargs: Arguments for denoise_windows_batch
 
     Returns:
         denoised_series: [T] denoised feature series
     """
+    device = denoise_kwargs.get('device', torch.device('cpu'))
     T = len(feature_series)
     denoised = np.zeros(T, dtype=np.float32)
     counts = np.zeros(T, dtype=np.int32)
 
-    # Compute per-series statistics for normalization
-    series_mean = np.mean(feature_series)
-    series_std = np.std(feature_series) + 1e-8
+    # Prepare all windows
+    window_starts = list(range(0, T - window_size + 1, stride))
+    windows = []
+    window_means = []
+    window_stds = []
 
-    # Rolling windows
-    for t_start in range(0, T - window_size + 1, stride):
+    for t_start in window_starts:
         t_end = t_start + window_size
-
-        # Extract and normalize window
         window = feature_series[t_start:t_end]
         window_mean = window.mean()
         window_std = window.std() + 1e-8
         window_normalized = (window - window_mean) / window_std
 
-        # Denoise
-        window_tensor = torch.from_numpy(window_normalized).float()
-        window_denoised = denoise_window(model, sde, window_tensor, **denoise_kwargs)
-        window_denoised = window_denoised.numpy()
+        windows.append(window_normalized)
+        window_means.append(window_mean)
+        window_stds.append(window_std)
 
-        # De-normalize
-        window_denoised = window_denoised * window_std + window_mean
+    # Process in batches
+    num_windows = len(windows)
+    for batch_start in range(0, num_windows, batch_size):
+        batch_end = min(batch_start + batch_size, num_windows)
 
-        # Accumulate
-        denoised[t_start:t_end] += window_denoised
-        counts[t_start:t_end] += 1
+        # Create batch tensor (stays on GPU)
+        batch_windows = torch.tensor(
+            np.array(windows[batch_start:batch_end]),
+            dtype=torch.float32,
+            device=device
+        )
+
+        # Denoise batch
+        batch_denoised = denoise_windows_batch(model, sde, batch_windows, **denoise_kwargs)
+
+        # Move to CPU only once per batch
+        batch_denoised_cpu = batch_denoised.cpu().numpy()
+
+        # De-normalize and accumulate
+        for i, global_idx in enumerate(range(batch_start, batch_end)):
+            t_start = window_starts[global_idx]
+            t_end = t_start + window_size
+
+            window_denoised = batch_denoised_cpu[i] * window_stds[global_idx] + window_means[global_idx]
+
+            denoised[t_start:t_end] += window_denoised
+            counts[t_start:t_end] += 1
 
     # Average overlapping windows
     denoised = denoised / np.maximum(counts, 1)
@@ -163,6 +181,7 @@ def main():
     parser.add_argument("--checkpoint", type=str, default="checkpoints/denoiser.pt")
     parser.add_argument("--window", type=int, default=60)
     parser.add_argument("--stride", type=int, default=10, help="Stride for rolling windows (smaller = more overlap)")
+    parser.add_argument("--batch_size", type=int, default=32, help="Batch size for parallel window processing")
     parser.add_argument("--T_prime", type=int, default=500)
     parser.add_argument("--n_seeds", type=int, default=3, help="Number of random seeds for averaging")
     parser.add_argument("--corrector_steps", type=int, default=1)
@@ -239,6 +258,7 @@ def main():
             feature_series,
             window_size=args.window,
             stride=args.stride,
+            batch_size=args.batch_size,
             **denoise_kwargs,
         )
 

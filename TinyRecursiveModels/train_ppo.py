@@ -1,6 +1,8 @@
 import os
 import math
+import argparse
 import numpy as np
+import pandas as pd
 import torch
 from torch import nn
 from torch.optim import Adam
@@ -16,15 +18,60 @@ from models.recursive_reasoning.trm_ppo import TRMPPOTemporalEncoder, TRMPPOConf
 
 
 def main():
-    csv_path = os.path.join("TinyRecursiveModels", "train.csv")
-    date_id, X, fwd, rf, mkt_excess, feat_names = load_market_csv(csv_path)
+    parser = argparse.ArgumentParser(description="Train TRM-PPO with configurable preprocessing")
+    parser.add_argument("--path", type=str, default=os.path.join("TinyRecursiveModels", "train.csv"))
+    parser.add_argument("--impute", type=str, default="legacy", choices=["legacy", "diffusion"],
+                        help="legacy: forward+back fill | diffusion: ffill+bfill+median (same as diffusion model)")
+    parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate")
+    parser.add_argument("--hidden_size", type=int, default=128, help="Hidden size for TRM model")
+    parser.add_argument("--num_heads", type=int, default=4, help="Number of attention heads")
+    parser.add_argument("--H_cycles", type=int, default=3, help="Number of H cycles")
+    parser.add_argument("--L_cycles", type=int, default=4, help="Number of L cycles")
+    parser.add_argument("--warm_start", type=str, default="", help="Path to supervised checkpoint for warm start")
+    parser.add_argument("--reward_mode", type=str, default="alpha", choices=["alpha", "sharpe"], help="Reward function mode")
+    parser.add_argument("--risk_penalty_lambda", type=float, default=0.0, help="Risk penalty weight")
+    args = parser.parse_args()
 
-    # impute
-    X = impute_forward_back_fill(X)
-    # standardize on train split only
-    split_idx = int(len(X) * 0.8)
-    stdzr = fit_standardizer(X[:split_idx])
-    X = stdzr.transform(X)
+    # Set seed
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+
+    csv_path = args.path
+
+    if args.impute == "diffusion":
+        # Use same preprocessing as diffusion model
+        df = pd.read_csv(csv_path)
+        cols = list(df.columns)
+        date_idx = cols.index("date_id")
+        target_cols = ["forward_returns", "risk_free_rate", "market_forward_excess_returns"]
+        first_target = min(cols.index(c) for c in target_cols)
+        feature_cols = cols[date_idx + 1:first_target]
+
+        date_id = df["date_id"].to_numpy()
+        X_df = df[feature_cols].copy()
+        X_df = X_df.ffill().bfill()
+        median = X_df.median(numeric_only=True)
+        X_df = X_df.fillna(median)
+        X = X_df.to_numpy(dtype=np.float32)
+        feat_names = feature_cols
+
+        fwd = impute_series(pd.to_numeric(df["forward_returns"], errors="coerce").to_numpy())
+        rf = impute_series(pd.to_numeric(df["risk_free_rate"], errors="coerce").to_numpy())
+        mkt_excess = impute_series(pd.to_numeric(df["market_forward_excess_returns"], errors="coerce").to_numpy())
+
+        # standardize on train split only
+        split_idx = int(len(X) * 0.8)
+        stdzr = fit_standardizer(X[:split_idx])
+        X = stdzr.transform(X)
+    else:
+        # Legacy preprocessing
+        date_id, X, fwd, rf, mkt_excess, feat_names = load_market_csv(csv_path)
+        X = impute_forward_back_fill(X)
+        split_idx = int(len(X) * 0.8)
+        stdzr = fit_standardizer(X[:split_idx])
+        X = stdzr.transform(X)
 
     # Impute targets, too, to avoid NaNs in reward/metric
     fwd = impute_series(fwd)
@@ -37,8 +84,8 @@ def main():
         config=MarketEnvConfig(
             window_size=60,
             train_fraction=0.8,
-            reward_mode="alpha",              # use alpha-style reward
-            risk_penalty_lambda=0.0,          # set >0.0 to activate penalty
+            reward_mode=args.reward_mode,
+            risk_penalty_lambda=args.risk_penalty_lambda,
             risk_cap_ratio=1.2,
             vol_window=60,
         ),
@@ -51,19 +98,27 @@ def main():
         TRMPPOConfig(
             window_size=env.config.window_size,
             num_features=X.shape[1],
-            hidden_size=128,
-            num_heads=4,
+            hidden_size=args.hidden_size,
+            num_heads=args.num_heads,
             expansion=4.0,
             pos_encodings="rope",
-            H_cycles=3,
-            L_cycles=4,
+            H_cycles=args.H_cycles,
+            L_cycles=args.L_cycles,
             L_layers=1,
         )
     ).to(device)
 
+    # Warm start from supervised checkpoint if provided
+    if args.warm_start and os.path.exists(args.warm_start):
+        print(f"Loading warm start checkpoint from {args.warm_start}...")
+        ckpt = torch.load(args.warm_start, map_location=device)
+        state = ckpt.get('model', ckpt)
+        policy.load_state_dict(state, strict=False)
+        print("Warm start loaded successfully")
+
     cfg = PPOConfig(tbptt_len=32)
-    optimizer = Adam(policy.parameters(), lr=cfg.lr)
-    scheduler = CosineAnnealingLR(optimizer, T_max=50, eta_min=cfg.lr * 0.1)
+    optimizer = Adam(policy.parameters(), lr=args.lr)
+    scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=args.lr * 0.1)
 
     # EMA toggles via env vars or constants
     USE_EMA = bool(int(os.environ.get("USE_EMA", "1")))
@@ -73,13 +128,12 @@ def main():
         ema.register(policy)
     buffer = RolloutBuffer(obs_shape=env.observation_shape, capacity=cfg.rollout_steps)
 
-    # training loop (single-episode per split)
-    NUM_EPOCHS = 1
+    # training loop
     best_val = -1e9
     best_path = os.path.join("TinyRecursiveModels", "checkpoints_trmppo.pt")
 
-    epoch_pbar = tqdm(total=NUM_EPOCHS, desc="Epochs", leave=True, dynamic_ncols=True, mininterval=0.2)
-    for epoch in range(NUM_EPOCHS):
+    epoch_pbar = tqdm(total=args.epochs, desc="Epochs", leave=True, dynamic_ncols=True, mininterval=0.2)
+    for epoch in range(args.epochs):
         for split in ("train", "val"):
             obs = env.reset(split=split)
             done = False
@@ -150,14 +204,13 @@ def main():
             split_pbar.close()
             # Evaluate adjusted sharpe at split end
             try:
-                import pandas as pd
-                df = pd.DataFrame({
+                df_eval = pd.DataFrame({
                     'forward_returns': np.array(fwd_list, dtype=np.float64),
                     'risk_free_rate': np.array(rf_list, dtype=np.float64),
                 })
                 # evaluate with EMA copy if enabled on val split
                 eval_model = ema.ema_copy(policy) if (ema is not None and split == "val") else policy
-                score = adjusted_sharpe(df, np.array(allocations, dtype=np.float64))
+                score = adjusted_sharpe(df_eval, np.array(allocations, dtype=np.float64))
                 print(f"Epoch {epoch+1} Split {split} steps={step} AdjustedSharpe={score:.6f}")
                 if split == "val" and score > best_val:
                     best_val = score

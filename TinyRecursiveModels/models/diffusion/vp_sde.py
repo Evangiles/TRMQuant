@@ -127,5 +127,6 @@ class VPSDE:
             x_corrected: Corrected state [B, L]
         """
         noise = torch.randn_like(x_t)
-        x_corrected = x_t + step_size * score + torch.sqrt(2 * step_size) * noise
+        step_size_tensor = torch.tensor(step_size, device=x_t.device, dtype=x_t.dtype)
+        x_corrected = x_t + step_size_tensor * score + torch.sqrt(2 * step_size_tensor) * noise
         return x_corrected
