@@ -162,3 +162,63 @@ class MarketEnv:
         return next_obs, r, done, info
 
 
+class VectorizedMarketEnv:
+    """
+    Vectorized environment wrapper for parallel rollout.
+
+    Runs N independent MarketEnv instances in parallel to improve GPU utilization.
+
+    Args:
+        num_envs: Number of parallel environments (default: 8)
+        **kwargs: Arguments passed to each MarketEnv instance
+
+    Example:
+        >>> envs = VectorizedMarketEnv(num_envs=8, features=X, market_excess_returns=mkt_excess, config=cfg)
+        >>> obs = envs.reset("train")  # [N, window_size, F]
+        >>> obs, rewards, dones, infos = envs.step(actions)  # actions: [N]
+    """
+
+    def __init__(self, num_envs: int = 8, **env_kwargs) -> None:
+        self.num_envs = num_envs
+        self.envs = [MarketEnv(**env_kwargs) for _ in range(num_envs)]
+
+        # Cache properties from first env
+        self.observation_shape = self.envs[0].observation_shape
+        self.config = self.envs[0].config
+        self._splits = self.envs[0]._splits
+
+    def reset(self, split: str = "train") -> np.ndarray:
+        """
+        Reset all environments.
+
+        Returns:
+            obs: [num_envs, window_size, num_features]
+        """
+        obs_list = [env.reset(split) for env in self.envs]
+        return np.stack(obs_list, axis=0)  # [N, window_size, F]
+
+    def step(self, actions: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, list]:
+        """
+        Step all environments with vectorized actions.
+
+        Args:
+            actions: [num_envs] array of actions
+
+        Returns:
+            obs: [num_envs, window_size, F]
+            rewards: [num_envs]
+            dones: [num_envs]
+            infos: list of dicts, length num_envs
+        """
+        assert len(actions) == self.num_envs, f"Expected {self.num_envs} actions, got {len(actions)}"
+
+        results = [env.step(float(a)) for env, a in zip(self.envs, actions)]
+
+        obs = np.stack([r[0] for r in results], axis=0)      # [N, window_size, F]
+        rewards = np.array([r[1] for r in results], dtype=np.float32)  # [N]
+        dones = np.array([r[2] for r in results], dtype=bool)          # [N]
+        infos = [r[3] for r in results]                      # list of dicts
+
+        return obs, rewards, dones, infos
+
+

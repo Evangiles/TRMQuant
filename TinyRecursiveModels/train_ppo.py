@@ -10,7 +10,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from tqdm.auto import tqdm
 
 from rl.data.preprocess import load_market_csv, impute_forward_back_fill, fit_standardizer, impute_series
-from rl.envs.market_env import MarketEnv, MarketEnvConfig
+from rl.envs.market_env import MarketEnv, VectorizedMarketEnv, MarketEnvConfig
 from rl.ppo import RolloutBuffer, PPOConfig, ppo_update_seq
 from rl.metrics import adjusted_sharpe
 from rl.utils.ema import EMAHelper
@@ -32,6 +32,8 @@ def main():
     parser.add_argument("--warm_start", type=str, default="", help="Path to supervised checkpoint for warm start")
     parser.add_argument("--reward_mode", type=str, default="alpha", choices=["alpha", "sharpe"], help="Reward function mode")
     parser.add_argument("--risk_penalty_lambda", type=float, default=0.0, help="Risk penalty weight")
+    parser.add_argument("--tbptt_len", type=int, default=32, help="TBPTT sequence length (higher = better GPU util, more VRAM)")
+    parser.add_argument("--num_envs", type=int, default=1, help="Number of parallel environments (>1 for vectorized rollout, 5-10x speedup)")
     args = parser.parse_args()
 
     # Set seed
@@ -78,20 +80,35 @@ def main():
     rf = impute_series(rf)
     mkt_excess = impute_series(mkt_excess)
 
-    env = MarketEnv(
-        features=X,
-        market_excess_returns=mkt_excess,
-        config=MarketEnvConfig(
-            window_size=60,
-            train_fraction=0.8,
-            reward_mode=args.reward_mode,
-            risk_penalty_lambda=args.risk_penalty_lambda,
-            risk_cap_ratio=1.2,
-            vol_window=60,
-        ),
-        forward_returns=fwd,
-        risk_free_rate=rf,
+    # Create vectorized or single environment
+    env_config = MarketEnvConfig(
+        window_size=60,
+        train_fraction=0.8,
+        reward_mode=args.reward_mode,
+        risk_penalty_lambda=args.risk_penalty_lambda,
+        risk_cap_ratio=1.2,
+        vol_window=60,
     )
+
+    if args.num_envs > 1:
+        env = VectorizedMarketEnv(
+            num_envs=args.num_envs,
+            features=X,
+            market_excess_returns=mkt_excess,
+            config=env_config,
+            forward_returns=fwd,
+            risk_free_rate=rf,
+        )
+        print(f"Using vectorized environment with {args.num_envs} parallel envs")
+    else:
+        env = MarketEnv(
+            features=X,
+            market_excess_returns=mkt_excess,
+            config=env_config,
+            forward_returns=fwd,
+            risk_free_rate=rf,
+        )
+        print("Using single environment (consider --num_envs 8 for 5-10x speedup)")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     policy = TRMPPOTemporalEncoder(
@@ -117,7 +134,7 @@ def main():
         print("Warm start loaded successfully")
 
     cfg = PPOConfig(
-        tbptt_len=32,
+        tbptt_len=args.tbptt_len,
         lr=args.lr,
         ent_coef=0.05,  # Increase entropy to prevent collapse
         clip_eps=0.2,
@@ -146,15 +163,23 @@ def main():
     epoch_pbar = tqdm(total=args.epochs, desc="Epochs", leave=True, dynamic_ncols=True, mininterval=0.2)
     for epoch in range(args.epochs):
         for split in ("train", "val"):
-            obs = env.reset(split=split)
-            done = False
-            carry = policy.initial_carry(batch_size=1)
+            obs = env.reset(split=split)  # [N, window_size, F] if vectorized else [window_size, F]
+
+            # Handle vectorized vs single environment
+            if args.num_envs > 1:
+                done = np.zeros(args.num_envs, dtype=bool)
+                carry = policy.initial_carry(batch_size=args.num_envs)
+            else:
+                done = False
+                carry = policy.initial_carry(batch_size=1)
+                obs = obs[np.newaxis, ...]  # Add batch dim: [1, window_size, F]
 
             step = 0
             allocations = []
             fwd_list = []
             rf_list = []
             buffer.ptr = 0
+
             # progress for current split
             try:
                 total_steps_split = int(env._splits[split][1] - env._splits[split][0] + 1)
@@ -168,51 +193,95 @@ def main():
                 mininterval=0.1,
             )
 
-            while not done:
-                # avoid reallocating tensors each step
-                obs_t = torch.as_tensor(obs, device=device).unsqueeze(0)
+            while not (done.all() if args.num_envs > 1 else done):
+                # obs is now always [N, window_size, F]
+                obs_t = torch.as_tensor(obs, device=device, dtype=torch.float32)
+
                 with torch.no_grad():
                     carry, action, logprob, value = policy.act(carry, obs_t, deterministic=False)
-                a = float(action.squeeze(0).cpu().numpy())
 
-                next_obs, reward, done, info = env.step(a)
-                allocations.append(a)
-                # align fwd/rf at current t
-                t_idx = env._t - 1
-                fwd_list.append(float(fwd[t_idx]))
-                rf_list.append(float(rf[t_idx]))
+                # Convert actions to numpy
+                actions_np = action.cpu().numpy()  # [N]
 
-                # Only add to buffer during training
-                if split == "train":
-                    buffer.add(
-                        torch.from_numpy(obs),
-                        torch.tensor(a, dtype=torch.float32),
-                        torch.tensor(reward, dtype=torch.float32),
-                        torch.tensor(done, dtype=torch.bool),
-                        value.squeeze(0).cpu(),
-                        logprob.squeeze(0).cpu(),
-                        carry  # Pass carry state to buffer
-                    )
+                # Step environment(s)
+                if args.num_envs > 1:
+                    next_obs, rewards, dones, infos = env.step(actions_np)
 
-                obs = next_obs
+                    # Store all environment data
+                    for i in range(args.num_envs):
+                        if not done[i]:  # Only process if not already done
+                            allocations.append(float(actions_np[i]))
+                            t_idx = env.envs[i]._t - 1
+                            fwd_list.append(float(fwd[t_idx]))
+                            rf_list.append(float(rf[t_idx]))
+
+                            # Add to buffer during training
+                            if split == "train":
+                                # Extract single-env carry from batched carry
+                                from models.recursive_reasoning.trm_ppo import TRMPPOCarry
+                                carry_i = TRMPPOCarry(
+                                    z_H=carry.z_H[i:i+1],  # [1, T, D]
+                                    z_L=carry.z_L[i:i+1]   # [1, T, D]
+                                )
+                                buffer.add(
+                                    torch.from_numpy(obs[i]),  # [window_size, F]
+                                    torch.tensor(actions_np[i], dtype=torch.float32),
+                                    torch.tensor(rewards[i], dtype=torch.float32),
+                                    torch.tensor(dones[i], dtype=torch.bool),
+                                    value[i].cpu(),
+                                    logprob[i].cpu(),
+                                    carry_i
+                                )
+
+                    done = dones
+                    obs = next_obs
+                else:
+                    # Single environment (backward compatibility)
+                    a = float(actions_np[0])
+                    next_obs, reward, done_single, info = env.step(a)
+
+                    allocations.append(a)
+                    t_idx = env._t - 1
+                    fwd_list.append(float(fwd[t_idx]))
+                    rf_list.append(float(rf[t_idx]))
+
+                    if split == "train":
+                        buffer.add(
+                            torch.from_numpy(obs[0]),  # [window_size, F]
+                            torch.tensor(a, dtype=torch.float32),
+                            torch.tensor(reward, dtype=torch.float32),
+                            torch.tensor(done_single, dtype=torch.bool),
+                            value[0].cpu(),
+                            logprob[0].cpu(),
+                            carry
+                        )
+
+                    done = done_single
+                    obs = next_obs[np.newaxis, ...]  # Keep batch dim
+
                 step += 1
                 split_pbar.update(1)
 
-                if split == "train" and (buffer.ptr >= cfg.rollout_steps or done):
-                    # bootstrap with last value
-                    if done:
+                # PPO update (only during training)
+                if split == "train" and (buffer.ptr >= cfg.rollout_steps or (done.all() if args.num_envs > 1 else done)):
+                    # Bootstrap with last value
+                    if (done.all() if args.num_envs > 1 else done):
                         last_value = 0.0
                     else:
                         with torch.no_grad():
-                            _, _, _, last_value_t = policy.act(carry, torch.as_tensor(obs, device=device).unsqueeze(0), deterministic=True)
-                            last_value = float(last_value_t.squeeze(0).cpu())
+                            obs_bootstrap = torch.as_tensor(obs, device=device, dtype=torch.float32)
+                            _, _, _, last_value_t = policy.act(carry, obs_bootstrap, deterministic=True)
+                            last_value = float(last_value_t[0].cpu())
+
                     buffer.compute_gae(last_value=last_value, gamma=cfg.gamma, lam=cfg.gae_lambda)
                     metrics = ppo_update_seq(policy, optimizer, buffer, cfg)
-                    # print short training metrics summary every PPO update
+
                     if metrics:
                         print(f"PPO: pol_loss={metrics['policy_loss']:.4f} val_loss={metrics['value_loss']:.4f} ent={metrics['entropy']:.4f} clip={metrics['clip_frac']:.3f}")
+
                     if ema is not None:
                         ema.update(policy)
+
                     buffer.ptr = 0
 
             split_pbar.close()
