@@ -182,7 +182,7 @@ class TRMPPOTemporalEncoder(nn.Module):
         # clamp log_det to safe range
         log_det = torch.clamp(log_det, min=-20.0, max=0.0)
         action = (a_tanh + 1.0)  # map (-1,1) -> (0,2)
-        log_prob = (base_log_prob - log_det).sum(dim=-1, keepdim=False)
+        log_prob = base_log_prob - log_det  # [B] - don't sum over dim=-1 since already [B]
 
         return new_carry, action.clamp(0.0, 2.0), log_prob, value
 

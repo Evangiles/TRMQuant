@@ -149,9 +149,13 @@ def main():
     ema = EMAHelper(mu=EMA_MU) if USE_EMA else None
     if ema is not None:
         ema.register(policy)
+    # Buffer capacity scales with num_envs to maintain 1024-step update frequency
+    # num_envs=4 → capacity=4096, update every 1024 steps
+    buffer_capacity = cfg.rollout_steps * args.num_envs if args.num_envs > 1 else cfg.rollout_steps
+
     buffer = RolloutBuffer(
         obs_shape=env.observation_shape,
-        capacity=cfg.rollout_steps,
+        capacity=buffer_capacity,
         hidden_size=args.hidden_size,
         window_size=env.config.window_size
     )
@@ -207,31 +211,31 @@ def main():
                 if args.num_envs > 1:
                     next_obs, rewards, dones, infos = env.step(actions_np)
 
-                    # Store all environment data
-                    for i in range(args.num_envs):
-                        if not done[i]:  # Only process if not already done
-                            allocations.append(float(actions_np[i]))
-                            t_idx = env.envs[i]._t - 1
-                            fwd_list.append(float(fwd[t_idx]))
-                            rf_list.append(float(rf[t_idx]))
+                    # Active env mask
+                    active_mask = ~done
 
-                            # Add to buffer during training
-                            if split == "train":
-                                # Extract single-env carry from batched carry
-                                from models.recursive_reasoning.trm_ppo import TRMPPOCarry
-                                carry_i = TRMPPOCarry(
-                                    z_H=carry.z_H[i:i+1],  # [1, T, D]
-                                    z_L=carry.z_L[i:i+1]   # [1, T, D]
-                                )
-                                buffer.add(
-                                    torch.from_numpy(obs[i]),  # [window_size, F]
-                                    torch.tensor(actions_np[i], dtype=torch.float32),
-                                    torch.tensor(rewards[i], dtype=torch.float32),
-                                    torch.tensor(dones[i], dtype=torch.bool),
-                                    value[i:i+1].squeeze(0).cpu(),  # Extract from [N] and make scalar
-                                    logprob[i:i+1].squeeze(0).cpu(),  # Extract from [N] and make scalar
-                                    carry_i
-                                )
+                    # Metrics collection (light loop; optional)
+                    active_idx = np.where(active_mask)[0]
+                    for i in active_idx:
+                        allocations.append(float(actions_np[i]))
+                        t_idx = env.envs[i]._t - 1
+                        fwd_list.append(float(fwd[t_idx]))
+                        rf_list.append(float(rf[t_idx]))
+
+                    # Vectorized buffer add during training
+                    if split == "train":
+                        from models.recursive_reasoning.trm_ppo import TRMPPOCarry
+                        obs_b = torch.from_numpy(obs[active_mask])
+                        act_b = torch.from_numpy(actions_np[active_mask]).to(torch.float32)
+                        rew_b = torch.from_numpy(rewards[active_mask]).to(torch.float32)
+                        done_b = torch.from_numpy(dones[active_mask])
+                        val_b = value[active_mask].cpu()
+                        logp_b = logprob[active_mask].cpu()
+                        carry_b = TRMPPOCarry(
+                            z_H=carry.z_H[active_mask],
+                            z_L=carry.z_L[active_mask]
+                        )
+                        buffer.add_batch(obs_b, act_b, rew_b, done_b, val_b, logp_b, carry_b)
 
                     done = dones
                     obs = next_obs
@@ -246,24 +250,25 @@ def main():
                     rf_list.append(float(rf[t_idx]))
 
                     if split == "train":
-                        buffer.add(
-                            torch.from_numpy(obs[0]),  # [window_size, F]
-                            torch.tensor(a, dtype=torch.float32),
-                            torch.tensor(reward, dtype=torch.float32),
-                            torch.tensor(done_single, dtype=torch.bool),
-                            value[0:1].squeeze(0).cpu(),
-                            logprob[0:1].squeeze(0).cpu(),
-                            carry
-                        )
+                        from models.recursive_reasoning.trm_ppo import TRMPPOCarry
+                        obs_b = torch.from_numpy(obs)              # [1, T, F]
+                        act_b = torch.tensor([a], dtype=torch.float32)
+                        rew_b = torch.tensor([reward], dtype=torch.float32)
+                        done_b = torch.tensor([done_single], dtype=torch.bool)
+                        val_b = value.cpu()
+                        logp_b = logprob.cpu()
+                        carry_b = TRMPPOCarry(z_H=carry.z_H, z_L=carry.z_L)
+                        buffer.add_batch(obs_b, act_b, rew_b, done_b, val_b, logp_b, carry_b)
 
                     done = done_single
                     obs = next_obs[np.newaxis, ...]  # Keep batch dim
 
                 step += 1
-                split_pbar.update(1)
+                split_pbar.update(args.num_envs if args.num_envs > 1 else 1)
 
                 # PPO update (only during training)
-                if split == "train" and (buffer.ptr >= cfg.rollout_steps or (done.all() if args.num_envs > 1 else done)):
+                # Update every 1024 steps regardless of num_envs
+                if split == "train" and (buffer.is_full() or (done.all() if args.num_envs > 1 else done)):
                     # Bootstrap with last value
                     if (done.all() if args.num_envs > 1 else done):
                         last_value = 0.0
@@ -282,7 +287,8 @@ def main():
                     if ema is not None:
                         ema.update(policy)
 
-                    buffer.ptr = 0
+                    buffer.clear()
+                    step = 0
 
             split_pbar.close()
             # Evaluate adjusted sharpe at split end

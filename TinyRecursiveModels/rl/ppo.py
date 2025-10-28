@@ -25,6 +25,7 @@ class PPOConfig:
 class RolloutBuffer:
     def __init__(self, obs_shape: Tuple[int, int], capacity: int, hidden_size: int, window_size: int) -> None:
         T, F = obs_shape
+        self.capacity = capacity
         self.obs = torch.zeros((capacity, T, F), dtype=torch.float32)
         self.actions = torch.zeros((capacity,), dtype=torch.float32)
         self.rewards = torch.zeros((capacity,), dtype=torch.float32)
@@ -72,6 +73,64 @@ class RolloutBuffer:
         self.ptr += 1
         if bool(done):
             self._ep_counter += 1
+
+    def add_batch(self, obs_b: torch.Tensor, act_b: torch.Tensor, rew_b: torch.Tensor, done_b: torch.Tensor,
+                  val_b: torch.Tensor, logp_b: torch.Tensor, carry_b) -> None:
+        """
+        Add a batch of transitions to buffer in one shot.
+
+        Args:
+            obs_b: [N, T, F]
+            act_b: [N]
+            rew_b: [N]
+            done_b: [N]
+            val_b: [N]
+            logp_b: [N]
+            carry_b: TRMPPOCarry with z_H/z_L [N, T, D]
+        """
+        N = int(obs_b.shape[0])
+        if self.ptr + N > self.capacity:
+            N = max(0, self.capacity - self.ptr)
+            if N == 0:
+                return
+            obs_b = obs_b[:N]
+            act_b = act_b[:N]
+            rew_b = rew_b[:N]
+            done_b = done_b[:N]
+            val_b = val_b[:N]
+            logp_b = logp_b[:N]
+            carry_H = carry_b.z_H[:N]
+            carry_L = carry_b.z_L[:N]
+        else:
+            carry_H = carry_b.z_H
+            carry_L = carry_b.z_L
+
+        s, e = self.ptr, self.ptr + N
+        # ensure CPU float32/bool tensors
+        self.obs[s:e].copy_(obs_b.detach().to(dtype=self.obs.dtype, device=self.obs.device))
+        self.actions[s:e].copy_(act_b.detach().to(dtype=self.actions.dtype, device=self.actions.device))
+        self.rewards[s:e].copy_(rew_b.detach().to(dtype=self.rewards.dtype, device=self.rewards.device))
+        self.dones[s:e].copy_(done_b.detach().to(dtype=self.dones.dtype, device=self.dones.device))
+        self.values[s:e].copy_(val_b.detach().to(dtype=self.values.dtype, device=self.values.device))
+        self.logprobs[s:e].copy_(logp_b.detach().to(dtype=self.logprobs.dtype, device=self.logprobs.device))
+        self.carries_z_H[s:e].copy_(carry_H.detach().to(dtype=self.carries_z_H.dtype, device=self.carries_z_H.device))
+        self.carries_z_L[s:e].copy_(carry_L.detach().to(dtype=self.carries_z_L.dtype, device=self.carries_z_L.device))
+
+        # episode id accounting
+        done_cpu = self.dones[s:e]
+        for i in range(N):
+            self.ep_id[s + i] = self._ep_counter
+            if bool(done_cpu[i].item()):
+                self._ep_counter += 1
+
+        self.ptr = e
+
+    def clear(self) -> None:
+        self.ptr = 0
+        self._ep_counter = 0
+
+    def is_full(self) -> bool:
+        return self.ptr >= self.capacity
 
     def compute_gae(self, last_value: float, gamma: float, lam: float):
         adv = 0.0
