@@ -228,8 +228,8 @@ def main():
                                     torch.tensor(actions_np[i], dtype=torch.float32),
                                     torch.tensor(rewards[i], dtype=torch.float32),
                                     torch.tensor(dones[i], dtype=torch.bool),
-                                    value[i].cpu(),
-                                    logprob[i].cpu(),
+                                    value[i:i+1].squeeze(0).cpu(),  # Extract from [N] and make scalar
+                                    logprob[i:i+1].squeeze(0).cpu(),  # Extract from [N] and make scalar
                                     carry_i
                                 )
 
@@ -251,8 +251,8 @@ def main():
                             torch.tensor(a, dtype=torch.float32),
                             torch.tensor(reward, dtype=torch.float32),
                             torch.tensor(done_single, dtype=torch.bool),
-                            value[0].cpu(),
-                            logprob[0].cpu(),
+                            value[0:1].squeeze(0).cpu(),
+                            logprob[0:1].squeeze(0).cpu(),
                             carry
                         )
 
