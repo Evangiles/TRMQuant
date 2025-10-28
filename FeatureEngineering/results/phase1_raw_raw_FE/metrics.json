@@ -1,0 +1,17 @@
+{
+  "mean_ic": 0.02189229209116975,
+  "std_ic": 0.02555266570550194,
+  "mean_sharpe": 0.44007531003503997,
+  "std_sharpe": 0.2762897658264078,
+  "mean_adjusted_sharpe": 0.24904285022674624,
+  "std_adjusted_sharpe": 0.15713884410598059,
+  "mean_vol_penalty": 1.7732966791031337,
+  "std_vol_penalty": 0.028251771697769094,
+  "mean_return_penalty": 1.0,
+  "std_return_penalty": 0.0,
+  "mean_max_dd": -0.553299979434822,
+  "std_max_dd": 0.1509818564230036,
+  "mean_hit_rate": 0.5416384563303994,
+  "std_hit_rate": 0.014748152275417701,
+  "n_features": 412
+}

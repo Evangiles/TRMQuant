@@ -1,0 +1,77 @@
+# Feature engineering configuration
+
+# Rolling windows
+windows:
+  short: 21      # ~1 month
+  medium: 63     # ~3 months
+  long: 252      # ~1 year
+
+# Phase 1: Core features (12 features)
+phase1:
+  momentum:
+    - name: "ret_21"
+      type: "log_return"
+      window: 21
+    - name: "ret_63"
+      type: "log_return"
+      window: 63
+
+  volatility:
+    - name: "RV_21"
+      type: "realized_vol"
+      window: 21
+      annualize: 252
+    - name: "vol_carry"
+      type: "vol_spread"
+      windows: [21, 63]
+
+  mean_reversion:
+    - name: "z_price_63"
+      type: "zscore"
+      window: 63
+
+  technical:
+    - name: "RSI_14"
+      type: "rsi"
+      window: 14
+    - name: "MACD_hist"
+      type: "macd"
+      params: [12, 26, 9]
+    - name: "donch_pos"
+      type: "donchian_position"
+      window: 20
+
+  interest_rate:
+    - name: "term_spread"
+      type: "spread"
+      family: "I"
+    - name: "d_term"
+      type: "diff"
+      base: "term_spread"
+
+  risk_adjusted:
+    - name: "risk_adj_mom"
+      type: "momentum_over_vol"
+      mom_window: 63
+      vol_window: 21
+
+  interaction:
+    - name: "mom_term"
+      type: "product"
+      features: ["mom_combo", "d_term"]
+
+# Phase 2: Family-wise PCA
+phase2:
+  families: ["M", "E", "I", "P", "V", "S", "MOM"]
+  n_components: 2
+  normalize: true
+
+# Phase 3: Stability filtering
+phase3:
+  rankic:
+    lookback: 756  # 3 years
+    min_ic: 0.0
+    max_pvalue: 0.2
+  feature_selection:
+    method: "rankic"
+    top_k: null  # null = keep all passing threshold

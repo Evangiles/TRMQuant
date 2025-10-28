@@ -1,0 +1,71 @@
+# Model configuration
+
+# Validation strategy
+validation:
+  method: "timeseries_split"
+  n_splits: 5
+  test_size: 0.2
+  embargo: 21  # days between train/test to prevent leakage
+
+# LightGBM
+lightgbm:
+  objective: "regression"
+  metric: "rmse"
+  boosting_type: "gbdt"
+  num_leaves: 31
+  learning_rate: 0.05
+  n_estimators: 300
+  max_depth: 7
+  min_child_samples: 20
+  subsample: 0.8
+  colsample_bytree: 0.8
+  reg_alpha: 0.1
+  reg_lambda: 0.1
+  random_state: 42
+  n_jobs: -1
+  verbose: -1
+  early_stopping_rounds: 50
+
+# XGBoost
+xgboost:
+  objective: "reg:squarederror"
+  eval_metric: "rmse"
+  max_depth: 7
+  learning_rate: 0.05
+  n_estimators: 300
+  min_child_weight: 3
+  subsample: 0.8
+  colsample_bytree: 0.8
+  reg_alpha: 0.1
+  reg_lambda: 0.1
+  random_state: 42
+  n_jobs: -1
+  verbosity: 0
+  early_stopping_rounds: 50
+
+# Ridge Regression
+ridge:
+  alpha: 1.0
+  fit_intercept: true
+  normalize: false
+  random_state: 42
+
+# Random Forest
+random_forest:
+  n_estimators: 200
+  max_depth: 10
+  min_samples_split: 20
+  min_samples_leaf: 10
+  max_features: "sqrt"
+  random_state: 42
+  n_jobs: -1
+  verbose: 0
+
+# Elastic Net
+elastic_net:
+  alpha: 0.5
+  l1_ratio: 0.5
+  fit_intercept: true
+  normalize: false
+  random_state: 42
+  max_iter: 1000

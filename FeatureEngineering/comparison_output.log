@@ -1,0 +1,274 @@
+C:\Users\jrjin\Desktop\TRMwithQuant\FeatureEngineering\scripts\..\src\preprocessing.py:99: FutureWarning: Downcasting behavior in Series and DataFrame methods 'where', 'mask', and 'clip' is deprecated. In a future version this will not infer object dtypes or cast all-round floats to integers. Instead call result.infer_objects(copy=False) for object inference, or cast round floats explicitly. To opt-in to the future behavior, set `pd.set_option('future.no_silent_downcasting', True)`
+  df[col] = df[col].clip(lower=lower, upper=upper)
+C:\Users\jrjin\Desktop\TRMwithQuant\FeatureEngineering\scripts\..\src\preprocessing.py:99: FutureWarning: Downcasting behavior in Series and DataFrame methods 'where', 'mask', and 'clip' is deprecated. In a future version this will not infer object dtypes or cast all-round floats to integers. Instead call result.infer_objects(copy=False) for object inference, or cast round floats explicitly. To opt-in to the future behavior, set `pd.set_option('future.no_silent_downcasting', True)`
+  df[col] = df[col].clip(lower=lower, upper=upper)
+C:\Users\jrjin\Desktop\TRMwithQuant\FeatureEngineering\scripts\..\src\preprocessing.py:99: FutureWarning: Downcasting behavior in Series and DataFrame methods 'where', 'mask', and 'clip' is deprecated. In a future version this will not infer object dtypes or cast all-round floats to integers. Instead call result.infer_objects(copy=False) for object inference, or cast round floats explicitly. To opt-in to the future behavior, set `pd.set_option('future.no_silent_downcasting', True)`
+  df[col] = df[col].clip(lower=lower, upper=upper)
+C:\Users\jrjin\Desktop\TRMwithQuant\FeatureEngineering\scripts\..\src\preprocessing.py:99: FutureWarning: Downcasting behavior in Series and DataFrame methods 'where', 'mask', and 'clip' is deprecated. In a future version this will not infer object dtypes or cast all-round floats to integers. Instead call result.infer_objects(copy=False) for object inference, or cast round floats explicitly. To opt-in to the future behavior, set `pd.set_option('future.no_silent_downcasting', True)`
+  df[col] = df[col].clip(lower=lower, upper=upper)
+C:\Users\jrjin\Desktop\TRMwithQuant\FeatureEngineering\scripts\..\src\preprocessing.py:99: FutureWarning: Downcasting behavior in Series and DataFrame methods 'where', 'mask', and 'clip' is deprecated. In a future version this will not infer object dtypes or cast all-round floats to integers. Instead call result.infer_objects(copy=False) for object inference, or cast round floats explicitly. To opt-in to the future behavior, set `pd.set_option('future.no_silent_downcasting', True)`
+  df[col] = df[col].clip(lower=lower, upper=upper)
+C:\Users\jrjin\Desktop\TRMwithQuant\FeatureEngineering\scripts\..\src\preprocessing.py:99: FutureWarning: Downcasting behavior in Series and DataFrame methods 'where', 'mask', and 'clip' is deprecated. In a future version this will not infer object dtypes or cast all-round floats to integers. Instead call result.infer_objects(copy=False) for object inference, or cast round floats explicitly. To opt-in to the future behavior, set `pd.set_option('future.no_silent_downcasting', True)`
+  df[col] = df[col].clip(lower=lower, upper=upper)
+C:\Users\jrjin\Desktop\TRMwithQuant\FeatureEngineering\scripts\..\src\preprocessing.py:99: FutureWarning: Downcasting behavior in Series and DataFrame methods 'where', 'mask', and 'clip' is deprecated. In a future version this will not infer object dtypes or cast all-round floats to integers. Instead call result.infer_objects(copy=False) for object inference, or cast round floats explicitly. To opt-in to the future behavior, set `pd.set_option('future.no_silent_downcasting', True)`
+  df[col] = df[col].clip(lower=lower, upper=upper)
+C:\Users\jrjin\Desktop\TRMwithQuant\FeatureEngineering\scripts\..\src\preprocessing.py:99: FutureWarning: Downcasting behavior in Series and DataFrame methods 'where', 'mask', and 'clip' is deprecated. In a future version this will not infer object dtypes or cast all-round floats to integers. Instead call result.infer_objects(copy=False) for object inference, or cast round floats explicitly. To opt-in to the future behavior, set `pd.set_option('future.no_silent_downcasting', True)`
+  df[col] = df[col].clip(lower=lower, upper=upper)
+C:\Users\jrjin\Desktop\TRMwithQuant\FeatureEngineering\scripts\..\src\preprocessing.py:99: FutureWarning: Downcasting behavior in Series and DataFrame methods 'where', 'mask', and 'clip' is deprecated. In a future version this will not infer object dtypes or cast all-round floats to integers. Instead call result.infer_objects(copy=False) for object inference, or cast round floats explicitly. To opt-in to the future behavior, set `pd.set_option('future.no_silent_downcasting', True)`
+  df[col] = df[col].clip(lower=lower, upper=upper)
+C:\Users\jrjin\Desktop\TRMwithQuant\FeatureEngineering\scripts\..\src\preprocessing.py:99: FutureWarning: Downcasting behavior in Series and DataFrame methods 'where', 'mask', and 'clip' is deprecated. In a future version this will not infer object dtypes or cast all-round floats to integers. Instead call result.infer_objects(copy=False) for object inference, or cast round floats explicitly. To opt-in to the future behavior, set `pd.set_option('future.no_silent_downcasting', True)`
+  df[col] = df[col].clip(lower=lower, upper=upper)
+C:\Users\jrjin\Desktop\TRMwithQuant\FeatureEngineering\scripts\..\src\preprocessing.py:163: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df[f'{col}_diff'] = df[col].diff()
+C:\Users\jrjin\Desktop\TRMwithQuant\FeatureEngineering\scripts\..\src\preprocessing.py:163: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df[f'{col}_diff'] = df[col].diff()
+C:\Users\jrjin\Desktop\TRMwithQuant\FeatureEngineering\scripts\..\src\preprocessing.py:163: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df[f'{col}_diff'] = df[col].diff()
+C:\Users\jrjin\Desktop\TRMwithQuant\FeatureEngineering\scripts\..\src\preprocessing.py:163: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df[f'{col}_diff'] = df[col].diff()
+C:\Users\jrjin\Desktop\TRMwithQuant\FeatureEngineering\scripts\..\src\preprocessing.py:163: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df[f'{col}_diff'] = df[col].diff()
+C:\Users\jrjin\Desktop\TRMwithQuant\FeatureEngineering\scripts\..\src\preprocessing.py:163: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df[f'{col}_diff'] = df[col].diff()
+C:\Users\jrjin\Desktop\TRMwithQuant\FeatureEngineering\scripts\..\src\preprocessing.py:163: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df[f'{col}_diff'] = df[col].diff()
+C:\Users\jrjin\Desktop\TRMwithQuant\FeatureEngineering\scripts\..\src\preprocessing.py:163: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  df[f'{col}_diff'] = df[col].diff()
+================================================================================
+Dataset Comparison: train.csv vs train_denoised.csv
+================================================================================
+
+================================================================================
+Processing RAW dataset
+================================================================================
+
+Step 1: Preprocessing data/raw/train.csv...
+Loading data...
+  Shape: (8990, 98)
+  Columns: 98
+
+1. Handling missing values...
+2. Rolling MAD winsorization...
+3. Rolling z-score normalization...
+4. Adding differencing for level features...
+5. Splitting train/val...
+  Train: 7192 rows
+  Val: 1798 rows
+
+Saving to data/processed/train_baseline_raw.csv...
+
+Preprocessing complete!
+  Total features: 388
+  Train samples: 7192
+  Val samples: 1798
+
+Step 2: Training LightGBM on raw...
+
+Time Series Cross-Validation (5 splits, embargo=21)
+============================================================
+
+Fold 1/5
+Training LightGBM...
+[50]	train's rmse: 0.0071399	val's rmse: 0.0121537
+
+Validation Metrics:
+  IC: -0.0217 (p=0.4055)
+  Sharpe: 0.7382
+  Max DD: -0.5970
+  Hit Rate: 51.66%
+
+Fold 2/5
+Training LightGBM...
+[50]	train's rmse: 0.00829481	val's rmse: 0.00992775
+
+Validation Metrics:
+  IC: -0.0035 (p=0.8939)
+  Sharpe: 0.2384
+  Max DD: -0.6085
+  Hit Rate: 53.55%
+
+Fold 3/5
+Training LightGBM...
+[50]	train's rmse: 0.00840454	val's rmse: 0.0133722
+
+Validation Metrics:
+  IC: 0.0219 (p=0.3997)
+  Sharpe: 0.3465
+  Max DD: -0.8017
+  Hit Rate: 54.91%
+
+Fold 4/5
+Training LightGBM...
+[50]	train's rmse: 0.009316	val's rmse: 0.00834528
+
+Validation Metrics:
+  IC: 0.0610 (p=0.0190)
+  Sharpe: 0.9531
+  Max DD: -0.3022
+  Hit Rate: 54.16%
+
+Fold 5/5
+Training LightGBM...
+[50]	train's rmse: 0.00909273	val's rmse: 0.0114821
+
+Validation Metrics:
+  IC: -0.0197 (p=0.4500)
+  Sharpe: 0.9138
+  Max DD: -0.4791
+  Hit Rate: 55.11%
+
+============================================================
+Cross-Validation Summary
+============================================================
+Mean IC: 0.0076 ¡¾ 0.0346
+Mean Sharpe: 0.6380 ¡¾ 0.3279
+Mean Max DD: -0.5577 ¡¾ 0.1838
+Mean Hit Rate: 53.88% ¡¾ 1.39%
+
+Training final model on full dataset...
+Training LightGBM...
+[50]	train's rmse: 0.00935704	val's rmse: 0.00935704
+[100]	train's rmse: 0.00854988	val's rmse: 0.00854988
+[150]	train's rmse: 0.00793443	val's rmse: 0.00793443
+[200]	train's rmse: 0.00742263	val's rmse: 0.00742263
+[250]	train's rmse: 0.00699306	val's rmse: 0.00699306
+[300]	train's rmse: 0.00659746	val's rmse: 0.00659746
+
+Validation Metrics:
+  IC: 0.8247 (p=0.0000)
+  Sharpe: 7.5686
+  Max DD: -0.3538
+  Hit Rate: 79.09%
+
+================================================================================
+Processing DENOISED dataset
+================================================================================
+
+Step 1: Preprocessing data/raw/train_denoised.csv...
+Loading data...
+  Shape: (8990, 98)
+  Columns: 98
+
+1. Handling missing values...
+2. Rolling MAD winsorization...
+3. Rolling z-score normalization...
+4. Adding differencing for level features...
+5. Splitting train/val...
+  Train: 7192 rows
+  Val: 1798 rows
+
+Saving to data/processed/train_baseline_denoised.csv...
+
+Preprocessing complete!
+  Total features: 366
+  Train samples: 7192
+  Val samples: 1798
+
+Step 2: Training LightGBM on denoised...
+
+Time Series Cross-Validation (5 splits, embargo=21)
+============================================================
+
+Fold 1/5
+Training LightGBM...
+[50]	train's rmse: 0.00624683	val's rmse: 0.0120618
+[100]	train's rmse: 0.00569123	val's rmse: 0.0120412
+[150]	train's rmse: 0.00554297	val's rmse: 0.0120309
+
+Validation Metrics:
+  IC: 0.1343 (p=0.0000)
+  Sharpe: 1.7328
+  Max DD: -0.2240
+  Hit Rate: 54.64%
+
+Fold 2/5
+Training LightGBM...
+[50]	train's rmse: 0.00792052	val's rmse: 0.00943668
+
+Validation Metrics:
+  IC: 0.2606 (p=0.0000)
+  Sharpe: 2.3273
+  Max DD: -0.3893
+  Hit Rate: 56.87%
+
+Fold 3/5
+Training LightGBM...
+[50]	train's rmse: 0.0081252	val's rmse: 0.0125805
+[100]	train's rmse: 0.00719905	val's rmse: 0.0125144
+[150]	train's rmse: 0.00653425	val's rmse: 0.0125028
+
+Validation Metrics:
+  IC: 0.3153 (p=0.0000)
+  Sharpe: 2.8414
+  Max DD: -0.3020
+  Hit Rate: 59.72%
+
+Fold 4/5
+Training LightGBM...
+[50]	train's rmse: 0.00890074	val's rmse: 0.00777111
+
+Validation Metrics:
+  IC: 0.3068 (p=0.0000)
+  Sharpe: 3.1045
+  Max DD: -0.2055
+  Hit Rate: 58.97%
+
+Fold 5/5
+Training LightGBM...
+[50]	train's rmse: 0.00869791	val's rmse: 0.0109077
+[100]	train's rmse: 0.00789135	val's rmse: 0.0108643
+[150]	train's rmse: 0.00728286	val's rmse: 0.0108502
+
+Validation Metrics:
+  IC: 0.2756 (p=0.0000)
+  Sharpe: 2.8041
+  Max DD: -0.2111
+  Hit Rate: 58.23%
+
+============================================================
+Cross-Validation Summary
+============================================================
+Mean IC: 0.2585 ¡¾ 0.0729
+Mean Sharpe: 2.5620 ¡¾ 0.5417
+Mean Max DD: -0.2664 ¡¾ 0.0790
+Mean Hit Rate: 57.68% ¡¾ 2.00%
+
+Training final model on full dataset...
+Training LightGBM...
+[50]	train's rmse: 0.00895556	val's rmse: 0.00895556
+[100]	train's rmse: 0.00817398	val's rmse: 0.00817398
+[150]	train's rmse: 0.00760208	val's rmse: 0.00760208
+[200]	train's rmse: 0.00713027	val's rmse: 0.00713027
+[250]	train's rmse: 0.00672092	val's rmse: 0.00672092
+[300]	train's rmse: 0.00636679	val's rmse: 0.00636679
+
+Validation Metrics:
+  IC: 0.8035 (p=0.0000)
+  Sharpe: 7.8271
+  Max DD: -0.0769
+  Hit Rate: 78.49%
+
+================================================================================
+FINAL COMPARISON
+================================================================================
+
+Metric                    Raw                  Denoised             Improvement    
+--------------------------------------------------------------------------------
+IC                        0.0076¡¾0.0346        0.2585¡¾0.0729        +3286.8%       
+Sharpe Ratio              0.6380¡¾0.3279        2.5620¡¾0.5417        +301.6%        
+Max Drawdown              -0.5577¡¾0.1838       -0.2664¡¾0.0790       -52.2%         
+Hit Rate                  0.5388¡¾0.0139        0.5768¡¾0.0200        +7.1%          
+
+Dataset Info              Raw                  Denoised            
+--------------------------------------------------------------------------------
+Features                  388                  366                 
+Train Samples             7192                 7192                
+Val Samples               1798                 1798                
+
+================================================================================
+Comparison Complete!
+================================================================================
+Results saved to:
+  - results/baseline_raw/
+  - results/baseline_denoised/
+  - results/dataset_comparison.json

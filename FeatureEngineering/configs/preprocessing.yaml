@@ -1,0 +1,32 @@
+# Preprocessing configuration
+
+# Missing value handling
+missing:
+  method: "ffill_bfill"  # forward fill then backward fill
+  add_nan_flag: true      # create _nan indicator columns
+
+# Outlier handling (Rolling MAD winsorization)
+outlier:
+  method: "rolling_mad"
+  window: 252             # ~1 year
+  k: 4                    # MAD multiplier (4 sigma equivalent)
+  min_periods: 21         # minimum periods for rolling
+
+# Normalization (Rolling z-score)
+normalization:
+  method: "rolling_zscore"
+  window: 252
+  min_periods: 21
+  epsilon: 0.00000001  # 1e-8
+
+# Differencing for level features
+differencing:
+  level_prefixes: ["E", "I", "P"]  # Economic, Interest, Price
+  methods:
+    - "diff"      # simple difference
+    - "logdiff"   # log difference
+
+# Train/val split
+split:
+  train_fraction: 0.8
+  method: "temporal"  # time-based split, no shuffle
