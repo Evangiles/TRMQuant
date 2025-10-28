@@ -132,15 +132,26 @@ class RolloutBuffer:
     def is_full(self) -> bool:
         return self.ptr >= self.capacity
 
-    def compute_gae(self, last_value: float, gamma: float, lam: float):
-        adv = 0.0
+    def compute_gae(self, gamma: float, lam: float):
+        """
+        Compute GAE with proper episode boundary handling.
+        No external last_value needed - uses episode boundaries.
+        """
+        adv = torch.zeros((), dtype=self.values.dtype)
         for i in range(self.ptr - 1, -1, -1):
+            # Check if next step is in same episode
+            same_ep_next = (i + 1 < self.ptr) and (self.ep_id[i] == self.ep_id[i + 1])
+            next_v = self.values[i + 1] if same_ep_next else torch.zeros_like(self.values[i])
+
+            # TD error
+            delta = self.rewards[i] + gamma * next_v - self.values[i]
+
+            # GAE accumulation (reset at episode boundaries)
             nonterminal = 1.0 - float(self.dones[i].item())
-            delta = self.rewards[i] + gamma * last_value * nonterminal - self.values[i]
             adv = delta + gamma * lam * adv * nonterminal
+
             self.advantages[i] = adv
-            self.returns[i] = self.advantages[i] + self.values[i]
-            last_value = self.values[i].item()
+            self.returns[i] = adv + self.values[i]
 
     def get_minibatches(self, num_minibatches: int):
         idxs = torch.randperm(self.ptr)
@@ -196,7 +207,9 @@ class RolloutBuffer:
             val_seq = self.values[indices]                 # [B, L]
             logp_seq = self.logprobs[indices]              # [B, L]
             done_seq = self.dones[indices]                 # [B, L]
-            mask_seq = (~done_seq).to(torch.float32)       # [B, L]
+            # Include all steps (including terminal) in loss computation
+            # GAE already handles episode boundaries correctly
+            mask_seq = torch.ones_like(done_seq, dtype=torch.float32)  # [B, L]
 
             # Extract initial carry states (only at sequence start)
             carry_H_init = self.carries_z_H[batch_starts]  # [B, T, D]
@@ -205,41 +218,7 @@ class RolloutBuffer:
             yield (obs_seq, act_seq, ret_seq, adv_seq, val_seq, logp_seq, mask_seq, carry_H_init, carry_L_init)
 
 
-def ppo_update(policy: nn.Module, optimizer: torch.optim.Optimizer, buffer: RolloutBuffer, cfg: PPOConfig):
-    advantages = buffer.advantages
-    advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-
-    for _ in range(cfg.update_epochs):
-        for obs, actions, returns, advs, old_values, old_logprobs in buffer.get_minibatches(cfg.num_minibatches):
-            # forward
-            carry = policy.initial_carry(batch_size=obs.shape[0])
-            carry, action_pred, logprob_pred, value_pred = policy.act(carry, obs, deterministic=False)
-
-            # PPO losses
-            ratio = torch.exp(logprob_pred - old_logprobs)
-            surr1 = ratio * advs
-            surr2 = torch.clamp(ratio, 1.0 - cfg.clip_eps, 1.0 + cfg.clip_eps) * advs
-            policy_loss = -torch.min(surr1, surr2).mean()
-
-            value_clip = old_values + torch.clamp(value_pred - old_values, -cfg.clip_eps, cfg.clip_eps)
-            value_losses = (value_pred - returns) ** 2
-            value_losses_clipped = (value_clip - returns) ** 2
-            value_loss = 0.5 * torch.max(value_losses, value_losses_clipped).mean()
-
-            entropy_bonus = -(torch.exp(logprob_pred) * logprob_pred).mean()
-
-            loss = policy_loss + cfg.vf_coef * value_loss - cfg.ent_coef * entropy_bonus
-
-            optimizer.zero_grad()
-            loss.backward()
-            nn.utils.clip_grad_norm_(policy.parameters(), max_norm=1.0)
-            optimizer.step()
-
-
 def ppo_update_seq(policy: nn.Module, optimizer: torch.optim.Optimizer, buffer: RolloutBuffer, cfg: PPOConfig) -> Dict[str, float]:
-    advantages = buffer.advantages
-    advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-
     # metric accumulators
     agg = dict(policy_loss=0.0, value_loss=0.0, entropy=0.0, clip_frac=0.0, adv_mean=0.0, adv_std=0.0)
     batches = 0
@@ -256,6 +235,9 @@ def ppo_update_seq(policy: nn.Module, optimizer: torch.optim.Optimizer, buffer: 
             logp_seq = logp_seq.to(device, non_blocking=True)
             mask_seq = mask_seq.to(device, non_blocking=True)
 
+            # Normalize advantages per minibatch
+            adv_seq = (adv_seq - adv_seq.mean()) / (adv_seq.std() + 1e-8)
+
             # Use stored carry states instead of initial_carry()
             from models.recursive_reasoning.trm_ppo import TRMPPOCarry
             carry = TRMPPOCarry(
@@ -264,18 +246,22 @@ def ppo_update_seq(policy: nn.Module, optimizer: torch.optim.Optimizer, buffer: 
             )
             logp_preds = []
             value_preds = []
+            entropy_preds = []
             for t in range(L):
-                carry, a_pred, logp_pred, v_pred = policy.act(carry, obs_seq[:, t], deterministic=False)
+                # Use infer() instead of act() to compute log_prob of stored actions
+                carry, logp_pred, v_pred, ent_pred = policy.infer(carry, obs_seq[:, t], act_seq[:, t])
                 # mask invalid steps
                 m = mask_seq[:, t]
                 logp_preds.append(logp_pred * m)
                 value_preds.append(v_pred * m)
+                entropy_preds.append(ent_pred * m)
                 # Note: No need for manual carry reset!
                 # Sequences are constructed to not cross episode boundaries,
                 # so carry naturally flows through valid timesteps only.
 
             logp_preds = torch.stack(logp_preds, dim=1)  # [B,L]
             value_preds = torch.stack(value_preds, dim=1)  # [B,L]
+            entropy_preds = torch.stack(entropy_preds, dim=1)  # [B,L]
 
             # stabilize ratio by clipping log prob difference
             dlogp = torch.clamp(logp_preds - logp_seq, min=-20.0, max=20.0)
@@ -291,9 +277,8 @@ def ppo_update_seq(policy: nn.Module, optimizer: torch.optim.Optimizer, buffer: 
             value_loss = torch.max(value_losses, value_losses_clipped)
             value_loss = 0.5 * (value_loss * mask_seq).sum() / (mask_seq.sum() + 1e-8)
 
-            # entropy approx from logprob (no explicit dist entropy here)
-            entropy_bonus = -(torch.exp(logp_preds) * logp_preds)
-            entropy_bonus = (entropy_bonus * mask_seq).sum() / (mask_seq.sum() + 1e-8)
+            # Use exact entropy from policy distribution
+            entropy_bonus = (entropy_preds * mask_seq).sum() / (mask_seq.sum() + 1e-8)
 
             # clip fraction
             clip_frac = ((ratio - 1.0).abs() > cfg.clip_eps).to(torch.float32)

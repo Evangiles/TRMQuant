@@ -80,10 +80,6 @@ class TRMPPOTemporalEncoder(nn.Module):
         # transformer layers
         self.L_level = nn.ModuleList([TRMPPOBlock(config) for _ in range(config.L_layers)])
 
-        # initial states
-        self.H_init = nn.Buffer(torch.zeros(config.hidden_size, dtype=self.forward_dtype), persistent=True)
-        self.L_init = nn.Buffer(torch.zeros(config.hidden_size, dtype=self.forward_dtype), persistent=True)
-
         # actor/critic heads
         self.actor_mu = CastedLinear(config.hidden_size, 1, bias=True)
         self.actor_logstd = nn.Parameter(torch.zeros(1, dtype=torch.float32))
@@ -95,12 +91,13 @@ class TRMPPOTemporalEncoder(nn.Module):
         else:
             return dict(cos_sin=None)
 
-    def _encode(self, x: torch.Tensor) -> torch.Tensor:
+    def _encode(self, x: torch.Tensor, seq_info: Dict[str, torch.Tensor] = None) -> torch.Tensor:
         # x: [B, T, F]
         h = self.x_proj(x.to(self.forward_dtype))
         if hasattr(self, "embed_pos"):
             h = 0.707106781 * (h + self.embed_pos.embedding_weight.to(self.forward_dtype))
-        seq_info = self._positional(h)
+        if seq_info is None:
+            seq_info = self._positional(h)
         for layer in self.L_level:
             h = layer(hidden_states=h, **seq_info)
         return h  # [B, T, D]
@@ -118,8 +115,11 @@ class TRMPPOTemporalEncoder(nn.Module):
 
     def forward(self, carry: TRMPPOCarry, obs: torch.Tensor) -> Tuple[TRMPPOCarry, Dict[str, torch.Tensor]]:
         # obs: [B, T, F]
-        # Encode inputs
-        x_enc = self._encode(obs)
+        # Compute positional info once for consistency across all encoding passes
+        seq_info = self._positional(obs)
+
+        # Encode inputs with shared seq_info
+        x_enc = self._encode(obs, seq_info)
 
         z_H, z_L = carry.z_H, carry.z_L
 
@@ -128,16 +128,16 @@ class TRMPPOTemporalEncoder(nn.Module):
             for _ in range(self.config.H_cycles - 1):
                 for _ in range(self.config.L_cycles):
                     z_L = z_L + x_enc
-                    z_L = self._encode_step(z_L)
+                    z_L = self._encode_step(z_L, seq_info)
                 z_H = z_H + z_L
-                z_H = self._encode_step(z_H)
+                z_H = self._encode_step(z_H, seq_info)
 
         # 1 with grad
         for _ in range(self.config.L_cycles):
             z_L = z_L + x_enc
-            z_L = self._encode_step(z_L)
+            z_L = self._encode_step(z_L, seq_info)
         z_H = z_H + z_L
-        z_H = self._encode_step(z_H)
+        z_H = self._encode_step(z_H, seq_info)
 
         # pooled representation
         pooled = z_H.mean(dim=1).to(torch.float32)  # [B, D]
@@ -150,8 +150,8 @@ class TRMPPOTemporalEncoder(nn.Module):
 
         return new_carry, {"mu": mu, "log_std": log_std, "value": value}
 
-    def _encode_step(self, h: torch.Tensor) -> torch.Tensor:
-        seq_info = self._positional(h)
+    def _encode_step(self, h: torch.Tensor, seq_info: Dict[str, torch.Tensor]) -> torch.Tensor:
+        """Encode step using provided positional info for consistency."""
         for layer in self.L_level:
             h = layer(hidden_states=h, **seq_info)
         return h
@@ -159,9 +159,48 @@ class TRMPPOTemporalEncoder(nn.Module):
     @staticmethod
     def _tanh_squash(u: torch.Tensor, eps: float = 1e-6) -> Tuple[torch.Tensor, torch.Tensor]:
         a = torch.tanh(u)
-        # log det Jacobian term: sum log(1 - tanh(u)^2)
-        log_det = torch.log(1.0 - a * a + eps)
+        # log det Jacobian term: log(1 - tanh(u)^2) using log1p for numerical stability
+        log_det = torch.log1p(-a * a + eps)
         return a, log_det
+
+    def infer(self, carry: TRMPPOCarry, obs: torch.Tensor, action: torch.Tensor) -> Tuple[TRMPPOCarry, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Compute log_prob and value for given stored actions (for PPO update).
+
+        Args:
+            carry: TRMPPOCarry state
+            obs: observations [B, T, F]
+            action: stored actions [B] in range [0, 2]
+
+        Returns:
+            new_carry, log_prob, value, entropy
+        """
+        new_carry, out = self.forward(carry, obs)
+        mu, log_std, value = out["mu"], out["log_std"], out["value"]
+
+        # clamp log_std to avoid inf/NaN
+        log_std = torch.clamp(log_std, -5.0, 2.0)
+        std = torch.exp(log_std)
+
+        # Reverse the action transformation: (0,2) -> (-1,1)
+        a_tanh = action - 1.0  # [B]
+        a_tanh = torch.clamp(a_tanh, -1.0 + 1e-6, 1.0 - 1e-6)  # numerical stability
+
+        # Inverse tanh to get u (atanh with eps in both numerator and denominator)
+        u = 0.5 * torch.log((1.0 + a_tanh + 1e-8) / (1.0 - a_tanh + 1e-8))
+
+        # Log prob of Gaussian at u
+        base_log_prob = -0.5 * (((u - mu) / (std + 1e-8)) ** 2 + 2 * log_std + math.log(2 * math.pi))
+
+        # Tanh squash correction using log1p for numerical stability
+        log_det = torch.log1p(-a_tanh * a_tanh + 1e-6)
+
+        log_prob = base_log_prob - log_det  # [B]
+
+        # Entropy of the Gaussian distribution (before tanh squash)
+        entropy = 0.5 * (1.0 + math.log(2 * math.pi)) + log_std  # [B]
+
+        return new_carry, log_prob, value, entropy
 
     def act(self, carry: TRMPPOCarry, obs: torch.Tensor, deterministic: bool = False) -> Tuple[TRMPPOCarry, torch.Tensor, torch.Tensor, torch.Tensor]:
         new_carry, out = self.forward(carry, obs)
@@ -179,8 +218,6 @@ class TRMPPOTemporalEncoder(nn.Module):
             base_log_prob = -0.5 * (((u - mu) / (std + 1e-8)) ** 2 + 2 * log_std + math.log(2 * math.pi))
 
         a_tanh, log_det = self._tanh_squash(u)
-        # clamp log_det to safe range
-        log_det = torch.clamp(log_det, min=-20.0, max=0.0)
         action = (a_tanh + 1.0)  # map (-1,1) -> (0,2)
         log_prob = base_log_prob - log_det  # [B] - don't sum over dim=-1 since already [B]
 

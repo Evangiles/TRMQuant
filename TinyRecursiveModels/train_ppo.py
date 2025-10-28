@@ -14,17 +14,17 @@ from rl.envs.market_env import MarketEnv, VectorizedMarketEnv, MarketEnvConfig
 from rl.ppo import RolloutBuffer, PPOConfig, ppo_update_seq
 from rl.metrics import adjusted_sharpe
 from rl.utils.ema import EMAHelper
-from models.recursive_reasoning.trm_ppo import TRMPPOTemporalEncoder, TRMPPOConfig
+from models.recursive_reasoning.trm_ppo import TRMPPOTemporalEncoder, TRMPPOConfig, TRMPPOCarry
 
 
 def main():
     parser = argparse.ArgumentParser(description="Train TRM-PPO with configurable preprocessing")
-    parser.add_argument("--path", type=str, default=os.path.join("TinyRecursiveModels", "train.csv"))
+    parser.add_argument("--path", type=str, default=os.path.join("TinyRecursiveModels", "train_denoised.csv"))
     parser.add_argument("--impute", type=str, default="legacy", choices=["legacy", "diffusion"],
                         help="legacy: forward+back fill | diffusion: ffill+bfill+median (same as diffusion model)")
     parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
-    parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate")
+    parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
     parser.add_argument("--hidden_size", type=int, default=256, help="Hidden size for TRM model")
     parser.add_argument("--num_heads", type=int, default=4, help="Number of attention heads")
     parser.add_argument("--H_cycles", type=int, default=4, help="Number of H cycles")
@@ -34,6 +34,7 @@ def main():
     parser.add_argument("--risk_penalty_lambda", type=float, default=0.0, help="Risk penalty weight")
     parser.add_argument("--tbptt_len", type=int, default=32, help="TBPTT sequence length (higher = better GPU util, more VRAM)")
     parser.add_argument("--num_envs", type=int, default=1, help="Number of parallel environments (>1 for vectorized rollout, 5-10x speedup)")
+    parser.add_argument("--rollout_steps", type=int, default=1024, help="Steps per PPO update per environment (e.g., 256, 512, 1024)")
     args = parser.parse_args()
 
     # Set seed
@@ -136,9 +137,11 @@ def main():
     cfg = PPOConfig(
         tbptt_len=args.tbptt_len,
         lr=args.lr,
-        ent_coef=0.05,  # Increase entropy to prevent collapse
-        clip_eps=0.2,
+        ent_coef=0.001,  # Reduced from 0.05 to preserve pretrain behavior
+        clip_eps=0.1,    # Reduced from 0.2 for more conservative updates
         vf_coef=0.5,
+        update_epochs=3,  # Reduced from 6 to avoid over-fitting
+        rollout_steps=args.rollout_steps,
     )
     optimizer = Adam(policy.parameters(), lr=args.lr)
     scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=args.lr * 0.1)
@@ -149,9 +152,8 @@ def main():
     ema = EMAHelper(mu=EMA_MU) if USE_EMA else None
     if ema is not None:
         ema.register(policy)
-    # Buffer capacity scales with num_envs to maintain 1024-step update frequency
-    # num_envs=4 → capacity=4096, update every 1024 steps
-    buffer_capacity = cfg.rollout_steps * args.num_envs if args.num_envs > 1 else cfg.rollout_steps
+    # Buffer capacity scales with num_envs: update after (rollout_steps * num_envs) transitions
+    buffer_capacity = args.rollout_steps * args.num_envs if args.num_envs > 1 else args.rollout_steps
 
     buffer = RolloutBuffer(
         obs_shape=env.observation_shape,
@@ -167,6 +169,12 @@ def main():
     epoch_pbar = tqdm(total=args.epochs, desc="Epochs", leave=True, dynamic_ncols=True, mininterval=0.2)
     for epoch in range(args.epochs):
         for split in ("train", "val"):
+            # Switch train/eval mode
+            if split == "train":
+                policy.train()
+            else:
+                policy.eval()
+
             obs = env.reset(split=split)  # [N, window_size, F] if vectorized else [window_size, F]
 
             # Handle vectorized vs single environment
@@ -182,7 +190,7 @@ def main():
             allocations = []
             fwd_list = []
             rf_list = []
-            buffer.ptr = 0
+            buffer.clear()  # Properly reset buffer including episode counter
 
             # progress for current split
             try:
@@ -197,22 +205,37 @@ def main():
                 mininterval=0.1,
             )
 
-            while not (done.all() if args.num_envs > 1 else done):
+            # Track processed samples to avoid overshooting dataset steps
+            processed = 0
+            if args.num_envs > 1:
+                finished_mask = np.zeros(args.num_envs, dtype=bool)
+
+            # Use EMA model for validation actions
+            actor_for_eval = ema.ema_copy(policy) if (ema and split == "val") else policy
+            if split == "val":
+                actor_for_eval.eval()
+
+            while True:
                 # obs is now always [N, window_size, F]
                 obs_t = torch.as_tensor(obs, device=device, dtype=torch.float32)
 
                 with torch.no_grad():
-                    carry, action, logprob, value = policy.act(carry, obs_t, deterministic=False)
+                    carry, action, logprob, value = actor_for_eval.act(carry, obs_t, deterministic=(split == "val"))
 
                 # Convert actions to numpy
                 actions_np = action.cpu().numpy()  # [N]
 
                 # Step environment(s)
                 if args.num_envs > 1:
-                    next_obs, rewards, dones, infos = env.step(actions_np)
+                    # Mask out finished envs to avoid counting/reset loops
+                    active_mask = ~finished_mask
+                    if not active_mask.any():
+                        break
 
-                    # Active env mask
-                    active_mask = ~done
+                    # Zero out actions for finished envs to keep API shape
+                    actions_np_masked = actions_np.copy()
+                    actions_np_masked[~active_mask] = 0.0
+                    next_obs, rewards, dones, infos = env.step(actions_np_masked)
 
                     # Metrics collection (light loop; optional)
                     active_idx = np.where(active_mask)[0]
@@ -224,7 +247,6 @@ def main():
 
                     # Vectorized buffer add during training
                     if split == "train":
-                        from models.recursive_reasoning.trm_ppo import TRMPPOCarry
                         obs_b = torch.from_numpy(obs[active_mask])
                         act_b = torch.from_numpy(actions_np[active_mask]).to(torch.float32)
                         rew_b = torch.from_numpy(rewards[active_mask]).to(torch.float32)
@@ -237,8 +259,12 @@ def main():
                         )
                         buffer.add_batch(obs_b, act_b, rew_b, done_b, val_b, logp_b, carry_b)
 
-                    done = dones
-                    obs = next_obs
+                    # Update finished mask and advance only active envs' obs
+                    finished_mask = finished_mask | dones
+                    obs[active_mask] = next_obs[active_mask]
+
+                    # Progress accounting: count only active envs this step
+                    processed += int(active_mask.sum())
                 else:
                     # Single environment (backward compatibility)
                     a = float(actions_np[0])
@@ -250,7 +276,6 @@ def main():
                     rf_list.append(float(rf[t_idx]))
 
                     if split == "train":
-                        from models.recursive_reasoning.trm_ppo import TRMPPOCarry
                         obs_b = torch.from_numpy(obs)              # [1, T, F]
                         act_b = torch.tensor([a], dtype=torch.float32)
                         rew_b = torch.tensor([reward], dtype=torch.float32)
@@ -262,23 +287,22 @@ def main():
 
                     done = done_single
                     obs = next_obs[np.newaxis, ...]  # Keep batch dim
+                    processed += 1
 
                 step += 1
-                split_pbar.update(args.num_envs if args.num_envs > 1 else 1)
+                # Update progress bar
+                inc = int(active_mask.sum()) if args.num_envs > 1 else 1
+                split_pbar.update(inc)
+
+                # Stop when we've consumed the split's steps
+                if total_steps_split and processed >= total_steps_split:
+                    break
 
                 # PPO update (only during training)
                 # Update every 1024 steps regardless of num_envs
                 if split == "train" and (buffer.is_full() or (done.all() if args.num_envs > 1 else done)):
-                    # Bootstrap with last value
-                    if (done.all() if args.num_envs > 1 else done):
-                        last_value = 0.0
-                    else:
-                        with torch.no_grad():
-                            obs_bootstrap = torch.as_tensor(obs, device=device, dtype=torch.float32)
-                            _, _, _, last_value_t = policy.act(carry, obs_bootstrap, deterministic=True)
-                            last_value = float(last_value_t[0].cpu())
-
-                    buffer.compute_gae(last_value=last_value, gamma=cfg.gamma, lam=cfg.gae_lambda)
+                    # Compute GAE with episode boundaries (no manual bootstrapping needed)
+                    buffer.compute_gae(gamma=cfg.gamma, lam=cfg.gae_lambda)
                     metrics = ppo_update_seq(policy, optimizer, buffer, cfg)
 
                     if metrics:
@@ -297,10 +321,11 @@ def main():
                     'forward_returns': np.array(fwd_list, dtype=np.float64),
                     'risk_free_rate': np.array(rf_list, dtype=np.float64),
                 })
-                # evaluate with EMA copy if enabled on val split
-                eval_model = ema.ema_copy(policy) if (ema is not None and split == "val") else policy
+                # allocations already generated by actor_for_eval (EMA model for val)
                 score = adjusted_sharpe(df_eval, np.array(allocations, dtype=np.float64))
-                print(f"Epoch {epoch+1} Split {split} steps={step} AdjustedSharpe={score:.6f}")
+                # Save the model that generated these allocations
+                eval_model = actor_for_eval
+                print(f"Epoch {epoch+1} Split {split} steps={len(allocations)} AdjustedSharpe={score:.6f}")
                 if split == "val" and score > best_val:
                     best_val = score
                     torch.save({'model': (eval_model.state_dict()), 'score': best_val}, best_path)
