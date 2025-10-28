@@ -23,7 +23,7 @@ class PPOConfig:
 
 
 class RolloutBuffer:
-    def __init__(self, obs_shape: Tuple[int, int], capacity: int) -> None:
+    def __init__(self, obs_shape: Tuple[int, int], capacity: int, hidden_size: int, window_size: int) -> None:
         T, F = obs_shape
         self.obs = torch.zeros((capacity, T, F), dtype=torch.float32)
         self.actions = torch.zeros((capacity,), dtype=torch.float32)
@@ -33,12 +33,29 @@ class RolloutBuffer:
         self.logprobs = torch.zeros((capacity,), dtype=torch.float32)
         self.advantages = torch.zeros((capacity,), dtype=torch.float32)
         self.returns = torch.zeros((capacity,), dtype=torch.float32)
+
+        # Carry state storage for recurrent policy
+        self.carries_z_H = torch.zeros((capacity, window_size, hidden_size), dtype=torch.float32)
+        self.carries_z_L = torch.zeros((capacity, window_size, hidden_size), dtype=torch.float32)
+
         self.ptr = 0
         # episode ids to avoid crossing boundaries in sequences
         self.ep_id = torch.zeros((capacity,), dtype=torch.int32)
         self._ep_counter = 0
 
-    def add(self, obs, action, reward, done, value, logprob):
+    def add(self, obs, action, reward, done, value, logprob, carry):
+        """
+        Add transition to buffer.
+
+        Args:
+            obs: Observation [T, F]
+            action: Action (scalar)
+            reward: Reward (scalar)
+            done: Done flag (bool)
+            value: Value estimate (scalar)
+            logprob: Log probability (scalar)
+            carry: TRMPPOCarry with z_H [1, T, D], z_L [1, T, D]
+        """
         i = self.ptr
         self.obs[i].copy_(obs)
         self.actions[i] = action
@@ -46,6 +63,11 @@ class RolloutBuffer:
         self.dones[i] = done
         self.values[i] = value
         self.logprobs[i] = logprob
+
+        # Store carry states (squeeze batch dimension)
+        self.carries_z_H[i].copy_(carry.z_H.squeeze(0).cpu())
+        self.carries_z_L[i].copy_(carry.z_L.squeeze(0).cpu())
+
         self.ep_id[i] = self._ep_counter
         self.ptr += 1
         if bool(done):
@@ -78,6 +100,13 @@ class RolloutBuffer:
             )
 
     def get_sequence_minibatches(self, tbptt_len: int, num_minibatches: int) -> Iterator[Tuple[torch.Tensor, ...]]:
+        """
+        Generate sequence minibatches with initial carry states.
+
+        Returns:
+            Iterator yielding (obs_seq, act_seq, ret_seq, adv_seq, val_seq, logp_seq, mask_seq, carry_H_init, carry_L_init)
+            where carry_H_init and carry_L_init are the initial carry states at each sequence start [B, T, D]
+        """
         # collect start indices where a full sequence of length L fits and does not cross episode boundary
         starts = []
         for i in range(0, self.ptr - tbptt_len):
@@ -95,16 +124,26 @@ class RolloutBuffer:
             batch_starts = perm[s:e]
             B = len(batch_starts)
             L = tbptt_len
-            # build sequences
-            obs_seq = torch.stack([self.obs[i:i+L] for i in batch_starts], dim=0)              # [B,L,T,F]
-            act_seq = torch.stack([self.actions[i:i+L] for i in batch_starts], dim=0)           # [B,L]
-            ret_seq = torch.stack([self.returns[i:i+L] for i in batch_starts], dim=0)           # [B,L]
-            adv_seq = torch.stack([self.advantages[i:i+L] for i in batch_starts], dim=0)        # [B,L]
-            val_seq = torch.stack([self.values[i:i+L] for i in batch_starts], dim=0)            # [B,L]
-            logp_seq = torch.stack([self.logprobs[i:i+L] for i in batch_starts], dim=0)         # [B,L]
-            done_seq = torch.stack([self.dones[i:i+L] for i in batch_starts], dim=0)            # [B,L]
-            mask_seq = (~done_seq).to(torch.float32)                                            # [B,L]
-            yield (obs_seq, act_seq, ret_seq, adv_seq, val_seq, logp_seq, mask_seq)
+
+            # Vectorized sequence extraction using advanced indexing
+            # Create index tensor: [B, L] where each row is [i, i+1, ..., i+L-1]
+            indices = batch_starts.unsqueeze(1) + torch.arange(L, device=batch_starts.device).unsqueeze(0)  # [B, L]
+
+            # Extract sequences using advanced indexing (much faster than for loop)
+            obs_seq = self.obs[indices]                    # [B, L, T, F]
+            act_seq = self.actions[indices]                # [B, L]
+            ret_seq = self.returns[indices]                # [B, L]
+            adv_seq = self.advantages[indices]             # [B, L]
+            val_seq = self.values[indices]                 # [B, L]
+            logp_seq = self.logprobs[indices]              # [B, L]
+            done_seq = self.dones[indices]                 # [B, L]
+            mask_seq = (~done_seq).to(torch.float32)       # [B, L]
+
+            # Extract initial carry states (only at sequence start)
+            carry_H_init = self.carries_z_H[batch_starts]  # [B, T, D]
+            carry_L_init = self.carries_z_L[batch_starts]  # [B, T, D]
+
+            yield (obs_seq, act_seq, ret_seq, adv_seq, val_seq, logp_seq, mask_seq, carry_H_init, carry_L_init)
 
 
 def ppo_update(policy: nn.Module, optimizer: torch.optim.Optimizer, buffer: RolloutBuffer, cfg: PPOConfig):
@@ -147,7 +186,7 @@ def ppo_update_seq(policy: nn.Module, optimizer: torch.optim.Optimizer, buffer: 
     batches = 0
 
     for _ in range(cfg.update_epochs):
-        for obs_seq, act_seq, ret_seq, adv_seq, val_seq, logp_seq, mask_seq in buffer.get_sequence_minibatches(cfg.tbptt_len, cfg.num_minibatches):
+        for obs_seq, act_seq, ret_seq, adv_seq, val_seq, logp_seq, mask_seq, carry_H_init, carry_L_init in buffer.get_sequence_minibatches(cfg.tbptt_len, cfg.num_minibatches):
             B, L, T, F = obs_seq.shape
             device = next(policy.parameters()).device
             obs_seq = obs_seq.to(device, non_blocking=True)
@@ -158,7 +197,12 @@ def ppo_update_seq(policy: nn.Module, optimizer: torch.optim.Optimizer, buffer: 
             logp_seq = logp_seq.to(device, non_blocking=True)
             mask_seq = mask_seq.to(device, non_blocking=True)
 
-            carry = policy.initial_carry(batch_size=B)
+            # Use stored carry states instead of initial_carry()
+            from models.recursive_reasoning.trm_ppo import TRMPPOCarry
+            carry = TRMPPOCarry(
+                z_H=carry_H_init.to(device, non_blocking=True),
+                z_L=carry_L_init.to(device, non_blocking=True)
+            )
             logp_preds = []
             value_preds = []
             for t in range(L):
@@ -167,12 +211,9 @@ def ppo_update_seq(policy: nn.Module, optimizer: torch.optim.Optimizer, buffer: 
                 m = mask_seq[:, t]
                 logp_preds.append(logp_pred * m)
                 value_preds.append(v_pred * m)
-                # reset carry where done==1 for next step
-                if (~m.bool()).any():
-                    reset_idx = (~m.bool()).nonzero(as_tuple=False).squeeze(-1)
-                    init = policy.initial_carry(batch_size=len(reset_idx))
-                    carry.z_H[reset_idx] = init.z_H
-                    carry.z_L[reset_idx] = init.z_L
+                # Note: No need for manual carry reset!
+                # Sequences are constructed to not cross episode boundaries,
+                # so carry naturally flows through valid timesteps only.
 
             logp_preds = torch.stack(logp_preds, dim=1)  # [B,L]
             value_preds = torch.stack(value_preds, dim=1)  # [B,L]

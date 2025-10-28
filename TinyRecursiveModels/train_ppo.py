@@ -25,10 +25,10 @@ def main():
     parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate")
-    parser.add_argument("--hidden_size", type=int, default=128, help="Hidden size for TRM model")
+    parser.add_argument("--hidden_size", type=int, default=256, help="Hidden size for TRM model")
     parser.add_argument("--num_heads", type=int, default=4, help="Number of attention heads")
-    parser.add_argument("--H_cycles", type=int, default=3, help="Number of H cycles")
-    parser.add_argument("--L_cycles", type=int, default=4, help="Number of L cycles")
+    parser.add_argument("--H_cycles", type=int, default=4, help="Number of H cycles")
+    parser.add_argument("--L_cycles", type=int, default=6, help="Number of L cycles")
     parser.add_argument("--warm_start", type=str, default="", help="Path to supervised checkpoint for warm start")
     parser.add_argument("--reward_mode", type=str, default="alpha", choices=["alpha", "sharpe"], help="Reward function mode")
     parser.add_argument("--risk_penalty_lambda", type=float, default=0.0, help="Risk penalty weight")
@@ -132,7 +132,12 @@ def main():
     ema = EMAHelper(mu=EMA_MU) if USE_EMA else None
     if ema is not None:
         ema.register(policy)
-    buffer = RolloutBuffer(obs_shape=env.observation_shape, capacity=cfg.rollout_steps)
+    buffer = RolloutBuffer(
+        obs_shape=env.observation_shape,
+        capacity=cfg.rollout_steps,
+        hidden_size=args.hidden_size,
+        window_size=env.config.window_size
+    )
 
     # training loop
     best_val = -1e9
@@ -186,6 +191,7 @@ def main():
                         torch.tensor(done, dtype=torch.bool),
                         value.squeeze(0).cpu(),
                         logprob.squeeze(0).cpu(),
+                        carry  # Pass carry state to buffer
                     )
 
                 obs = next_obs
