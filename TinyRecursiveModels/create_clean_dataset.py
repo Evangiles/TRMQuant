@@ -101,11 +101,12 @@ if remaining_nan > 0:
 # Step 5: Create final clean dataset
 print(f"\n=== Step 5: Create Final Dataset ===")
 
-# Reconstruct with metadata
-meta_cols = ['date_id'] + target_cols
+# Reconstruct with metadata (match original train.csv column order)
+# Original order: date_id, features, targets
 df_final = pd.concat([
-    df_clean[meta_cols].reset_index(drop=True),
-    X_clean.reset_index(drop=True)
+    df_clean[['date_id']].reset_index(drop=True),
+    X_clean.reset_index(drop=True),
+    df_clean[target_cols].reset_index(drop=True)
 ], axis=1)
 
 print(f"Final shape: {df_final.shape}")
