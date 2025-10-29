@@ -22,32 +22,20 @@ class FeatureWindowDataset(Dataset):
         features: np.ndarray,
         window_size: int = 60,
         stride: int = 20,
-        split: str = "train",
-        train_fraction: float = 0.8,
     ):
         """
         Args:
             features: [T, F] array of features
             window_size: Length of each window
             stride: Rolling window stride
-            split: 'train' or 'val'
-            train_fraction: Fraction for train split
         """
         self.features = features
         self.window_size = window_size
         self.stride = stride
 
-        # Generate all valid window start indices
+        # Generate all valid window start indices (use ALL data)
         T, F = features.shape
-        all_indices = np.arange(0, T - window_size + 1, stride)
-
-        # Split train/val
-        split_idx = int(len(all_indices) * train_fraction)
-        if split == "train":
-            self.indices = all_indices[:split_idx]
-        else:
-            self.indices = all_indices[split_idx:]
-
+        self.indices = np.arange(0, T - window_size + 1, stride)
         self.num_features = F
 
     def __len__(self):
@@ -180,7 +168,8 @@ def validate(
 
 def main():
     parser = argparse.ArgumentParser(description="Train diffusion denoiser")
-    parser.add_argument("--path", type=str, default="train.csv")
+    parser.add_argument("--train_path", type=str, default="train/clean_train.csv")
+    parser.add_argument("--val_path", type=str, default="val/clean_val.csv")
     parser.add_argument("--window", type=int, default=60)
     parser.add_argument("--stride", type=int, default=20)
     parser.add_argument("--epochs", type=int, default=50)
@@ -197,12 +186,16 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # Load data
-    print(f"Loading {args.path}...")
-    df = pd.read_csv(args.path)
+    # Load train data
+    print(f"Loading train: {args.train_path}...")
+    df_train = pd.read_csv(args.train_path)
+
+    # Load val data
+    print(f"Loading val: {args.val_path}...")
+    df_val = pd.read_csv(args.val_path)
 
     # Extract feature columns (everything except date_id and targets)
-    cols = list(df.columns)
+    cols = list(df_train.columns)
     date_idx = cols.index("date_id")
     target_cols = ["forward_returns", "risk_free_rate", "market_forward_excess_returns"]
     first_target = min(cols.index(c) for c in target_cols)
@@ -210,26 +203,28 @@ def main():
 
     print(f"Features: {len(feature_cols)} columns")
 
-    # Extract features as numpy array
-    X_df = df[feature_cols].copy()
-
-    # Check for NaN - data must be clean!
-    nan_count = X_df.isna().sum().sum()
+    # Extract train features
+    X_train_df = df_train[feature_cols].copy()
+    nan_count = X_train_df.isna().sum().sum()
     if nan_count > 0:
-        raise ValueError(
-            f"Found {nan_count} NaN values in input data! "
-            f"Please use clean dataset (e.g., train_clean.csv) without NaN."
-        )
+        raise ValueError(f"Found {nan_count} NaN in train data!")
+    X_train = X_train_df.to_numpy(dtype=np.float32)
+    print(f"Train shape: {X_train.shape}")
 
-    X = X_df.to_numpy(dtype=np.float32)
-    print(f"Data shape: {X.shape}")
+    # Extract val features
+    X_val_df = df_val[feature_cols].copy()
+    nan_count = X_val_df.isna().sum().sum()
+    if nan_count > 0:
+        raise ValueError(f"Found {nan_count} NaN in val data!")
+    X_val = X_val_df.to_numpy(dtype=np.float32)
+    print(f"Val shape: {X_val.shape}")
 
-    # Create datasets
+    # Create datasets (use ALL data from each file)
     train_dataset = FeatureWindowDataset(
-        X, window_size=args.window, stride=args.stride, split="train"
+        X_train, window_size=args.window, stride=args.stride
     )
     val_dataset = FeatureWindowDataset(
-        X, window_size=args.window, stride=args.stride, split="val"
+        X_val, window_size=args.window, stride=args.stride
     )
 
     print(f"Train samples: {len(train_dataset)}")

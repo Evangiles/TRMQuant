@@ -49,8 +49,10 @@ def main():
 
     X_train = df_train[feature_cols]
     y_train = df_train[target_col]
+    rf_train = df_train['risk_free_rate']
     X_val = df_val[feature_cols]
     y_val = df_val[target_col]
+    rf_val = df_val['risk_free_rate']
 
     print(f"\nFeatures: {len(feature_cols)}")
     print(f"Train samples: {len(X_train)}")
@@ -94,7 +96,7 @@ def main():
     y_pred = model.predict(X_val, num_iteration=model.best_iteration)
 
     print("\nValidation Metrics:")
-    metrics = calculate_metrics(y_val.values, y_pred)
+    metrics = calculate_metrics(y_val.values, y_pred, rf_val.values)
 
     print(f"  IC: {metrics['ic']:.4f} (p={metrics['ic_pvalue']:.4f})")
     print(f"  Raw Sharpe: {metrics['sharpe']:.4f}")
