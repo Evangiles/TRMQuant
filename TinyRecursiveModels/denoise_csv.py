@@ -231,11 +231,16 @@ def main():
 
     print(f"Features to denoise: {len(feature_cols)} columns")
 
-    # Simple imputation (same as training)
+    # Extract features - data must be clean!
     X_df = df[feature_cols].copy()
-    X_df = X_df.ffill().bfill()
-    median = X_df.median(numeric_only=True)
-    X_df = X_df.fillna(median)
+
+    # Check for NaN - data must be clean!
+    nan_count = X_df.isna().sum().sum()
+    if nan_count > 0:
+        raise ValueError(
+            f"Found {nan_count} NaN values in input data! "
+            f"Please use clean dataset (e.g., train_clean.csv) without NaN."
+        )
 
     # Denoise each feature
     denoised_df = X_df.copy()

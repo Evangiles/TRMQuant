@@ -1,0 +1,18 @@
+{
+  "data": "train_denoised2.csv (clean + leak-safe)",
+  "timestamp": "2025-10-29T16:03:37.320941",
+  "n_samples": 7984,
+  "n_features": 81,
+  "metrics": {
+    "mean_ic": 0.25115754597899115,
+    "std_ic": 0.04982351075829181,
+    "mean_sharpe": 1.989487866749009,
+    "std_sharpe": 1.4318417670951729,
+    "mean_adjusted_sharpe": 1.5777129060761084,
+    "std_adjusted_sharpe": 1.0682998382875852,
+    "mean_max_dd": -0.315758818215392,
+    "std_max_dd": 0.28013675842284286,
+    "mean_hit_rate": 0.5699006875477464,
+    "std_hit_rate": 0.03648972496888615
+  }
+}

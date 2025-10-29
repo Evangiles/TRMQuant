@@ -213,10 +213,13 @@ def main():
     # Extract features as numpy array
     X_df = df[feature_cols].copy()
 
-    # Simple imputation: forward fill + backward fill + median
-    X_df = X_df.ffill().bfill()
-    median = X_df.median(numeric_only=True)
-    X_df = X_df.fillna(median)
+    # Check for NaN - data must be clean!
+    nan_count = X_df.isna().sum().sum()
+    if nan_count > 0:
+        raise ValueError(
+            f"Found {nan_count} NaN values in input data! "
+            f"Please use clean dataset (e.g., train_clean.csv) without NaN."
+        )
 
     X = X_df.to_numpy(dtype=np.float32)
     print(f"Data shape: {X.shape}")
