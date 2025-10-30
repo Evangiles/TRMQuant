@@ -100,47 +100,44 @@ def denoise_feature_column(
     sde: VPSDE,
     feature_series: np.ndarray,
     window_size: int = 60,
-    stride: int = 1,
+    stride: int = 10,
     batch_size: int = 32,
     **denoise_kwargs,
 ) -> np.ndarray:
-    """Denoise entire feature column using CAUSAL rolling windows.
+    """Denoise entire feature column using rolling windows (paper's approach).
 
-    IMPORTANT: Uses only past data [t-window_size:t] to denoise timestep t.
-    This ensures no data leakage - at time t, only historical data is available.
+    Uses overlapping windows without averaging - later windows overwrite earlier ones.
+    NOTE: This uses future data and is NOT suitable for real-time deployment,
+    but matches the paper's validation methodology.
 
     Args:
         model: Trained denoiser
         sde: VP-SDE instance
         feature_series: [T] feature time series
-        window_size: Window size (lookback period)
-        stride: Stride for rolling windows (timesteps to skip between denoising)
+        window_size: Window size
+        stride: Stride for rolling windows
         batch_size: Number of windows to process in parallel
         **denoise_kwargs: Arguments for denoise_windows_batch
 
     Returns:
         denoised_series: [T] denoised feature series
-        - First window_size points: copied from original (insufficient history)
-        - Remaining points: denoised using causal windows
     """
     device = denoise_kwargs.get('device', torch.device('cpu'))
     T = len(feature_series)
 
-    # Initialize with original data (first window_size points won't be denoised)
+    # Initialize with original data
     denoised = feature_series.copy()
 
-    # CAUSAL WINDOWS: For timestep t, use [t-window_size:t]
-    # Start from window_size (first valid timestep with full history)
-    window_timesteps = list(range(window_size, T, stride))
+    # Non-causal windows: [t_start:t_start+window_size]
+    window_starts = list(range(0, T - window_size + 1, stride))
 
     windows = []
     window_means = []
     window_stds = []
-    target_timesteps = []
 
-    for t in window_timesteps:
-        # Causal window: look back from t
-        window = feature_series[t - window_size:t]
+    for t_start in window_starts:
+        t_end = t_start + window_size
+        window = feature_series[t_start:t_end]
         window_mean = window.mean()
         window_std = window.std() + 1e-8
         window_normalized = (window - window_mean) / window_std
@@ -148,7 +145,6 @@ def denoise_feature_column(
         windows.append(window_normalized)
         window_means.append(window_mean)
         window_stds.append(window_std)
-        target_timesteps.append(t)
 
     # Process in batches
     num_windows = len(windows)
@@ -168,16 +164,16 @@ def denoise_feature_column(
         # Move to CPU only once per batch
         batch_denoised_cpu = batch_denoised.cpu().numpy()
 
-        # De-normalize and update ONLY the target timestep (last point of window)
+        # Overwrite with denoised windows (no averaging)
         for i, global_idx in enumerate(range(batch_start, batch_end)):
-            t = target_timesteps[global_idx]
+            t_start = window_starts[global_idx]
+            t_end = t_start + window_size
 
-            # Denormalize the entire window
+            # Denormalize window
             window_denoised = batch_denoised_cpu[i] * window_stds[global_idx] + window_means[global_idx]
 
-            # Update ONLY the last point (timestep t)
-            # This is the denoised value for time t using past [t-60:t]
-            denoised[t] = window_denoised[-1]
+            # Overwrite (later windows overwrite earlier ones at overlaps)
+            denoised[t_start:t_end] = window_denoised
 
     return denoised
 
