@@ -162,16 +162,8 @@ def reconstruct_with_overlap_averaging(
     return reconstructed
 
 
-def normalize_features(data: np.ndarray):
-    """Normalize features (same as training)."""
-    mean = np.mean(data, axis=0, keepdims=True)
-    std = np.std(data, axis=0, keepdims=True) + 1e-8
-    normalized = (data - mean) / std
-    return normalized, mean, std
-
-
 def denormalize_features(data: np.ndarray, mean: np.ndarray, std: np.ndarray):
-    """Denormalize features."""
+    """Denormalize features using training statistics."""
     return data * std + mean
 
 
@@ -239,12 +231,27 @@ def main():
         print(f"✓ Loaded model from {model_path}")
         print(f"  Training loss: {checkpoint.get('loss', 'N/A'):.6f}")
 
+        # CRITICAL: Load training normalization statistics
+        # This prevents validation leakage by using ONLY training data statistics
+        if 'normalization_mean' not in checkpoint or 'normalization_std' not in checkpoint:
+            raise ValueError(
+                f"Checkpoint {model_path} missing normalization statistics!\n"
+                "This checkpoint was created with old code. Please retrain the model."
+            )
+
+        train_mean = np.array(checkpoint['normalization_mean'])
+        train_std = np.array(checkpoint['normalization_std'])
+        print(f"  Loaded training statistics:")
+        print(f"    Mean range: [{train_mean.min():.6f}, {train_mean.max():.6f}]")
+        print(f"    Std range:  [{train_std.min():.6f}, {train_std.max():.6f}]")
+
         # Extract feature data
         feature_data = df[feature_names].values
         feature_data = np.nan_to_num(feature_data, nan=0.0, posinf=0.0, neginf=0.0)
 
-        # Normalize
-        normalized_data, mean, std = normalize_features(feature_data)
+        # Normalize using TRAINING statistics (not inference data statistics!)
+        normalized_data = (feature_data - train_mean) / train_std
+        mean, std = train_mean, train_std
 
         # Create windows
         windows, positions = create_windows_with_overlap(

@@ -34,6 +34,9 @@ class TimeSeriesWindowDataset(Dataset):
     Dataset for windowed multivariate time series.
 
     Creates sliding windows from time series data.
+
+    IMPORTANT: Normalization statistics must be pre-computed externally
+    to prevent validation leakage when creating separate train/val datasets.
     """
 
     def __init__(
@@ -41,7 +44,9 @@ class TimeSeriesWindowDataset(Dataset):
         data: pd.DataFrame,
         feature_cols: list,
         window_size: int = 60,
-        stride: int = 1
+        stride: int = 1,
+        normalization_mean: np.ndarray = None,
+        normalization_std: np.ndarray = None
     ):
         """
         Args:
@@ -49,6 +54,8 @@ class TimeSeriesWindowDataset(Dataset):
             feature_cols: List of feature column names
             window_size: Window size
             stride: Stride for sliding window
+            normalization_mean: Pre-computed mean for normalization (required)
+            normalization_std: Pre-computed std for normalization (required)
         """
         self.window_size = window_size
         self.feature_cols = feature_cols
@@ -59,10 +66,14 @@ class TimeSeriesWindowDataset(Dataset):
         # Handle NaN and inf
         feature_data = np.nan_to_num(feature_data, nan=0.0, posinf=0.0, neginf=0.0)
 
-        # Normalize features to prevent numerical instability
-        mean = np.mean(feature_data, axis=0, keepdims=True)
-        std = np.std(feature_data, axis=0, keepdims=True) + 1e-8
-        feature_data = (feature_data - mean) / std
+        # Use pre-computed normalization statistics
+        if normalization_mean is None or normalization_std is None:
+            raise ValueError(
+                "normalization_mean and normalization_std must be provided to prevent data leakage. "
+                "Compute statistics externally before creating dataset."
+            )
+
+        feature_data = (feature_data - normalization_mean) / normalization_std
 
         # Create windows
         self.windows = []
@@ -196,12 +207,32 @@ def main():
     df = pd.read_csv(args.data_path)
     print(f"Loaded {len(df)} rows")
 
-    # Create dataset
+    # Validate that we're using train-only data
+    if 'train_only' not in str(args.data_path):
+        print(f"\n⚠️  WARNING: Training on {args.data_path}")
+        print(f"    Expected 'train_only.csv' to prevent validation leakage!")
+        print(f"    Proceeding anyway, but ensure this is intentional.\n")
+
+    # Pre-compute normalization statistics from training data
+    # This must be done BEFORE creating dataset to prevent leakage
+    print(f"\nComputing normalization statistics...")
+    feature_data = df[feature_names].values
+    feature_data = np.nan_to_num(feature_data, nan=0.0, posinf=0.0, neginf=0.0)
+
+    normalization_mean = np.mean(feature_data, axis=0, keepdims=True)
+    normalization_std = np.std(feature_data, axis=0, keepdims=True) + 1e-8
+
+    print(f"  Mean range: [{normalization_mean.min():.6f}, {normalization_mean.max():.6f}]")
+    print(f"  Std range:  [{normalization_std.min():.6f}, {normalization_std.max():.6f}]")
+
+    # Create dataset with pre-computed statistics
     dataset = TimeSeriesWindowDataset(
         df,
         feature_names,
         window_size=args.window_size,
-        stride=1
+        stride=1,
+        normalization_mean=normalization_mean,
+        normalization_std=normalization_std
     )
     print(f"Created {len(dataset)} windows")
 
@@ -277,6 +308,9 @@ def main():
                 'window_size': args.window_size,
                 'd_model': args.d_model,
                 'n_layers': args.n_layers,
+                # CRITICAL: Save normalization statistics for leak-free inference
+                'normalization_mean': normalization_mean.tolist(),
+                'normalization_std': normalization_std.tolist(),
             }, checkpoint_path)
 
             print(f"  → Saved checkpoint to {checkpoint_path}")

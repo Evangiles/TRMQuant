@@ -64,7 +64,23 @@ def split_train_val(input_csv: str, train_ratio: float = 0.8):
     print("\n4. Evaluate on val set only:")
     print("   python evaluation/validate_denoising.py --original val_only.csv --denoised val_denoised.csv")
 
-    # Also save denoised val extraction info
+    # Save split metadata for reproducibility
+    import json
+    from datetime import datetime
+
+    split_info = {
+        'n_train': n_train,
+        'n_val': n_val,
+        'train_ratio': train_ratio,
+        'total_rows': len(df),
+        'split_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    }
+
+    metadata_path = output_dir / "split_info.json"
+    with open(metadata_path, 'w') as f:
+        json.dump(split_info, f, indent=2)
+
+    print(f"  Metadata: {metadata_path}")
     print(f"\nVal set indices: {n_train} to {len(df)}")
 
     return n_train, n_val
