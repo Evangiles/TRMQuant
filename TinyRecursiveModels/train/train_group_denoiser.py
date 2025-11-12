@@ -103,13 +103,15 @@ def train_epoch(
     sde: VPSDE,
     loss_fn: nn.Module,
     optimizer: torch.optim.Optimizer,
-    device: str
+    device: str,
+    accumulation_steps: int = 1
 ):
-    """Train for one epoch."""
+    """Train for one epoch with optional gradient accumulation."""
     model.train()
     total_loss = 0.0
+    optimizer.zero_grad()
 
-    for batch in tqdm(dataloader, desc="Training"):
+    for batch_idx, batch in enumerate(tqdm(dataloader, desc="Training")):
         x0 = batch.to(device)  # [B, W, F]
 
         # Sample random timesteps
@@ -137,16 +139,20 @@ def train_epoch(
             print(f"\n⚠️  NaN/Inf detected in loss! Skipping batch...")
             continue
 
+        # Scale loss for gradient accumulation
+        loss = loss / accumulation_steps
+
         # Backward
-        optimizer.zero_grad()
         loss.backward()
 
-        # Strong gradient clipping for stability
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
+        # Update weights every accumulation_steps
+        if (batch_idx + 1) % accumulation_steps == 0 or (batch_idx + 1) == len(dataloader):
+            # Strong gradient clipping for stability
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
+            optimizer.step()
+            optimizer.zero_grad()
 
-        optimizer.step()
-
-        total_loss += loss.item()
+        total_loss += loss.item() * accumulation_steps
 
     return total_loss / len(dataloader)
 
@@ -164,6 +170,7 @@ def main():
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--lr", type=float, default=5e-5)  # Lower for stability
     parser.add_argument("--guidance_weight", type=float, default=0.1)
+    parser.add_argument("--accumulation_steps", type=int, default=1, help="Gradient accumulation steps")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
 
     args = parser.parse_args()
@@ -247,7 +254,7 @@ def main():
         for param_group in optimizer.param_groups:
             param_group['lr'] = args.lr * lr_scale
 
-        avg_loss = train_epoch(model, dataloader, sde, loss_fn, optimizer, args.device)
+        avg_loss = train_epoch(model, dataloader, sde, loss_fn, optimizer, args.device, args.accumulation_steps)
 
         print(f"Epoch {epoch+1}/{args.epochs} - Loss: {avg_loss:.6f}, LR: {args.lr * lr_scale:.6f}")
 
