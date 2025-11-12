@@ -168,7 +168,7 @@ def main():
     parser.add_argument("--n_layers", type=int, default=4)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--epochs", type=int, default=100)
-    parser.add_argument("--lr", type=float, default=5e-5)  # Lower for stability
+    parser.add_argument("--lr", type=float, default=5e-4)  # Empirically validated
     parser.add_argument("--guidance_weight", type=float, default=0.1)
     parser.add_argument("--accumulation_steps", type=int, default=1, help="Gradient accumulation steps")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
