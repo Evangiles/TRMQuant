@@ -1,14 +1,18 @@
 {
   "metadata": {
     "n_clusters": 7,
-    "n_features": 97,
+    "n_features": 94,
     "random_state": 42
   },
   "clusters": {
     "cluster_0": {
-      "feature_count": 38,
+      "feature_count": 40,
       "features": [
         "D4",
+        "D5",
+        "D6",
+        "D8",
+        "D9",
         "E1",
         "E10",
         "E11",
@@ -22,13 +26,11 @@
         "I4",
         "I6",
         "I7",
-        "I8",
         "M15",
         "M16",
         "M8",
         "P1",
         "P10",
-        "P11",
         "P13",
         "P8",
         "P9",
@@ -48,144 +50,33 @@
         "V8"
       ],
       "characteristics": {
-        "mean_hurst": 0.31176151956994197,
-        "mean_adf_pvalue": 0.02357966523026365,
-        "mean_volatility": 0.101301652584454,
-        "mean_autocorr": 0.9385156451867933,
-        "mean_skewness": 0.5321867267119889,
-        "mean_kurtosis": 1.8401394590217979
+        "mean_hurst": 0.2712975565401531,
+        "mean_adf_pvalue": 0.01456613264140702,
+        "mean_volatility": 0.1290919596339717,
+        "mean_autocorr": 0.9079608310579532,
+        "mean_skewness": 0.6450456902529723,
+        "mean_kurtosis": 1.8812424851088891
       },
       "type": "mean_reverting"
     },
     "cluster_1": {
-      "feature_count": 16,
+      "feature_count": 3,
       "features": [
-        "E19",
-        "M2",
-        "M3",
+        "E7",
         "M4",
-        "M6",
-        "P12",
-        "P5",
-        "P6",
-        "P7",
-        "S12",
-        "S5",
-        "V10",
-        "V13",
-        "V5",
-        "V7",
-        "V9"
+        "S5"
       ],
       "characteristics": {
-        "mean_hurst": 0.13857954177352,
-        "mean_adf_pvalue": 6.911055217863399e-06,
-        "mean_volatility": 0.7065392024705449,
-        "mean_autocorr": 0.7355662489760281,
-        "mean_skewness": 1.9472959307425621,
-        "mean_kurtosis": 12.877481794400701
+        "mean_hurst": 0.17080431403478288,
+        "mean_adf_pvalue": 1.6037904137032254e-05,
+        "mean_volatility": 0.7882020408638835,
+        "mean_autocorr": 0.8500906098466577,
+        "mean_skewness": -1.8444719444556237,
+        "mean_kurtosis": 18.80841761598108
       },
       "type": "mean_reverting"
     },
     "cluster_2": {
-      "feature_count": 20,
-      "features": [
-        "E16",
-        "E17",
-        "E18",
-        "E2",
-        "E3",
-        "I2",
-        "I5",
-        "I9",
-        "M1",
-        "M10",
-        "M11",
-        "M12",
-        "M5",
-        "M7",
-        "M9",
-        "P2",
-        "S1",
-        "S2",
-        "S3",
-        "S8"
-      ],
-      "characteristics": {
-        "mean_hurst": 0.4304229013933002,
-        "mean_adf_pvalue": 0.025106662968925903,
-        "mean_volatility": 0.33290781697286964,
-        "mean_autocorr": 0.9921198230926918,
-        "mean_skewness": 0.2031120331163745,
-        "mean_kurtosis": 0.6058998277683992
-      },
-      "type": "mean_reverting"
-    },
-    "cluster_3": {
-      "feature_count": 12,
-      "features": [
-        "D1",
-        "D2",
-        "D3",
-        "D5",
-        "D6",
-        "D7",
-        "D8",
-        "D9",
-        "P3",
-        "P4",
-        "forward_returns",
-        "market_forward_excess_returns"
-      ],
-      "characteristics": {
-        "mean_hurst": -0.004440800902187095,
-        "mean_adf_pvalue": 0.0,
-        "mean_volatility": 0.24137579741415863,
-        "mean_autocorr": 0.19951442714165737,
-        "mean_skewness": 1.9496275196584818,
-        "mean_kurtosis": 7.7094915717332855
-      },
-      "type": "mean_reverting"
-    },
-    "cluster_4": {
-      "feature_count": 9,
-      "features": [
-        "E12",
-        "E20",
-        "E5",
-        "E9",
-        "M13",
-        "M14",
-        "M17",
-        "M18",
-        "risk_free_rate"
-      ],
-      "characteristics": {
-        "mean_hurst": 0.5537660387022547,
-        "mean_adf_pvalue": 0.3606739313423253,
-        "mean_volatility": 0.04099413861448625,
-        "mean_autocorr": 0.9990846321207972,
-        "mean_skewness": 0.2530690320458696,
-        "mean_kurtosis": 0.07820712007257044
-      },
-      "type": "trending"
-    },
-    "cluster_5": {
-      "feature_count": 1,
-      "features": [
-        "E7"
-      ],
-      "characteristics": {
-        "mean_hurst": 0.4519274460271192,
-        "mean_adf_pvalue": 4.811371241109676e-05,
-        "mean_volatility": 0.5485578745968429,
-        "mean_autocorr": 0.9825135998314493,
-        "mean_skewness": -4.830459668652996,
-        "mean_kurtosis": 33.043179568561314
-      },
-      "type": "random_walk"
-    },
-    "cluster_6": {
       "feature_count": 1,
       "features": [
         "E8"
@@ -197,6 +88,112 @@
         "mean_autocorr": 0.9551311553595608,
         "mean_skewness": 6.137315626798554,
         "mean_kurtosis": 91.79463869083442
+      },
+      "type": "mean_reverting"
+    },
+    "cluster_3": {
+      "feature_count": 8,
+      "features": [
+        "E12",
+        "E5",
+        "E9",
+        "I8",
+        "M13",
+        "M14",
+        "M17",
+        "M18"
+      ],
+      "characteristics": {
+        "mean_hurst": 0.5318619588326206,
+        "mean_adf_pvalue": 0.3682643889948074,
+        "mean_volatility": 0.03467795079436899,
+        "mean_autocorr": 0.9988867594743918,
+        "mean_skewness": 0.3699700482938678,
+        "mean_kurtosis": -0.0583430925198159
+      },
+      "type": "random_walk"
+    },
+    "cluster_4": {
+      "feature_count": 14,
+      "features": [
+        "E19",
+        "M2",
+        "M3",
+        "M6",
+        "P12",
+        "P5",
+        "P6",
+        "P7",
+        "S12",
+        "V10",
+        "V13",
+        "V5",
+        "V7",
+        "V9"
+      ],
+      "characteristics": {
+        "mean_hurst": 0.15405622659279214,
+        "mean_adf_pvalue": 7.898348820415313e-06,
+        "mean_volatility": 0.6777556422524222,
+        "mean_autocorr": 0.7286644109934233,
+        "mean_skewness": 2.2756922183282056,
+        "mean_kurtosis": 13.046973959359235
+      },
+      "type": "mean_reverting"
+    },
+    "cluster_5": {
+      "feature_count": 6,
+      "features": [
+        "D1",
+        "D2",
+        "D3",
+        "D7",
+        "P3",
+        "P4"
+      ],
+      "characteristics": {
+        "mean_hurst": -0.0036587910924376983,
+        "mean_adf_pvalue": 0.0,
+        "mean_volatility": 0.22468305517714224,
+        "mean_autocorr": -0.027917239737751485,
+        "mean_skewness": 3.2209118559046837,
+        "mean_kurtosis": 13.96201297569221
+      },
+      "type": "mean_reverting"
+    },
+    "cluster_6": {
+      "feature_count": 22,
+      "features": [
+        "E16",
+        "E17",
+        "E18",
+        "E2",
+        "E20",
+        "E3",
+        "I2",
+        "I5",
+        "I9",
+        "M1",
+        "M10",
+        "M11",
+        "M12",
+        "M5",
+        "M7",
+        "M9",
+        "P11",
+        "P2",
+        "S1",
+        "S2",
+        "S3",
+        "S8"
+      ],
+      "characteristics": {
+        "mean_hurst": 0.43975525355778095,
+        "mean_adf_pvalue": 0.04071145144406904,
+        "mean_volatility": 0.31656542505712815,
+        "mean_autocorr": 0.9926998341942515,
+        "mean_skewness": 0.09124129918242024,
+        "mean_kurtosis": 0.615723134559587
       },
       "type": "mean_reverting"
     }

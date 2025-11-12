@@ -40,10 +40,18 @@ def get_feature_columns(df: pd.DataFrame) -> list:
         List of feature column names
     """
     target_cols = ['target', 'target_2d', 'target_5d']
-    exclude_cols = target_cols + ['date_id']  # Exclude date_id as it's a time index
+
+    # CRITICAL: Exclude forward-looking features to prevent data leakage
+    leakage_cols = [
+        'forward_returns',
+        'risk_free_rate',
+        'market_forward_excess_returns'
+    ]
+
+    exclude_cols = target_cols + ['date_id'] + leakage_cols
     all_cols = df.columns.tolist()
 
-    # Remove target columns, date_id, and non-numeric columns
+    # Remove target columns, date_id, leakage features, and non-numeric columns
     feature_cols = [
         col for col in all_cols
         if col not in exclude_cols and df[col].dtype in ['float64', 'int64']
