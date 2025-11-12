@@ -1,0 +1,299 @@
+"""
+Denoise Complete Dataset with Trained Group-Specific Models
+
+Applies trained denoiser models to entire dataset with overlap averaging
+for smooth reconstruction.
+
+Usage:
+    python inference/denoise_dataset.py \
+        --input_csv train.csv \
+        --output_csv train_denoised.csv \
+        --models_dir trained_models
+"""
+
+import sys
+import argparse
+from pathlib import Path
+import json
+import pandas as pd
+import numpy as np
+import torch
+from tqdm import tqdm
+
+# Add parent directory to path
+sys.path.append(str(Path(__file__).parent.parent))
+
+from models.diffusion_mamba import MultivariateMambaDenoiser, VPSDE
+
+
+def load_cluster_config(config_path: Path):
+    """Load cluster assignments."""
+    with open(config_path, 'r') as f:
+        return json.load(f)
+
+
+def load_model_checkpoint(checkpoint_path: Path, device: str):
+    """Load trained model from checkpoint."""
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+
+    model = MultivariateMambaDenoiser(
+        n_features=checkpoint['n_features'],
+        window_size=checkpoint['window_size'],
+        d_model=checkpoint['d_model'],
+        n_layers=checkpoint['n_layers']
+    ).to(device)
+
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model.eval()
+
+    return model, checkpoint
+
+
+@torch.no_grad()
+def denoise_windows(
+    model: MultivariateMambaDenoiser,
+    windows: np.ndarray,
+    sde: VPSDE,
+    device: str,
+    num_steps: int = 50,
+    batch_size: int = 64
+) -> np.ndarray:
+    """
+    Denoise multiple windows using the trained model.
+
+    Args:
+        model: Trained denoiser
+        windows: [N, window_size, n_features]
+        sde: VP-SDE for reverse diffusion
+        device: Device
+        num_steps: Number of denoising steps
+        batch_size: Batch size for inference
+
+    Returns:
+        Denoised windows [N, window_size, n_features]
+    """
+    n_windows = len(windows)
+    denoised_windows = []
+
+    # Process in batches
+    for i in tqdm(range(0, n_windows, batch_size), desc="Denoising"):
+        batch = windows[i:i + batch_size]
+        batch_tensor = torch.FloatTensor(batch).to(device)
+
+        # Start from noisy data (we use original data as "noisy")
+        # In practice, we do single-step denoising from t=T/2
+        t = torch.full(
+            (batch_tensor.shape[0],),
+            sde.num_timesteps // 2,
+            device=device,
+            dtype=torch.long
+        )
+
+        # Single denoising pass
+        denoised = model(batch_tensor, t)
+
+        denoised_windows.append(denoised.cpu().numpy())
+
+    return np.concatenate(denoised_windows, axis=0)
+
+
+def create_windows_with_overlap(
+    data: np.ndarray,
+    window_size: int,
+    stride: int
+) -> tuple:
+    """
+    Create overlapping windows and position information.
+
+    Args:
+        data: [T, F] time series data
+        window_size: Window size
+        stride: Stride for sliding window
+
+    Returns:
+        (windows, positions) where:
+        - windows: [N, window_size, F]
+        - positions: [N] start positions
+    """
+    windows = []
+    positions = []
+
+    for i in range(0, len(data) - window_size + 1, stride):
+        windows.append(data[i:i + window_size])
+        positions.append(i)
+
+    return np.array(windows), np.array(positions)
+
+
+def reconstruct_with_overlap_averaging(
+    denoised_windows: np.ndarray,
+    positions: np.ndarray,
+    total_length: int,
+    window_size: int
+) -> np.ndarray:
+    """
+    Reconstruct full time series using overlap averaging.
+
+    Args:
+        denoised_windows: [N, window_size, F]
+        positions: [N] start positions
+        total_length: Original time series length
+        window_size: Window size
+
+    Returns:
+        Reconstructed time series [total_length, F]
+    """
+    n_features = denoised_windows.shape[2]
+
+    # Initialize accumulation arrays
+    reconstructed = np.zeros((total_length, n_features))
+    counts = np.zeros((total_length, n_features))
+
+    # Accumulate denoised values
+    for window, pos in zip(denoised_windows, positions):
+        reconstructed[pos:pos + window_size] += window
+        counts[pos:pos + window_size] += 1
+
+    # Average overlapping regions
+    # Avoid division by zero
+    counts = np.maximum(counts, 1)
+    reconstructed = reconstructed / counts
+
+    return reconstructed
+
+
+def normalize_features(data: np.ndarray):
+    """Normalize features (same as training)."""
+    mean = np.mean(data, axis=0, keepdims=True)
+    std = np.std(data, axis=0, keepdims=True) + 1e-8
+    normalized = (data - mean) / std
+    return normalized, mean, std
+
+
+def denormalize_features(data: np.ndarray, mean: np.ndarray, std: np.ndarray):
+    """Denormalize features."""
+    return data * std + mean
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input_csv", type=str, required=True)
+    parser.add_argument("--output_csv", type=str, required=True)
+    parser.add_argument("--cluster_config", type=str, default="TinyRecursiveModels/clustering_results/cluster_assignments.json")
+    parser.add_argument("--models_dir", type=str, default="TinyRecursiveModels/trained_models")
+    parser.add_argument("--window_size", type=int, default=60)
+    parser.add_argument("--stride", type=int, default=30)
+    parser.add_argument("--num_steps", type=int, default=50)
+    parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
+
+    args = parser.parse_args()
+
+    print("="*80)
+    print("DATASET DENOISING")
+    print("="*80)
+    print(f"\nInput: {args.input_csv}")
+    print(f"Output: {args.output_csv}")
+    print(f"Device: {args.device}")
+    print(f"Window size: {args.window_size}, Stride: {args.stride}")
+
+    # Load data
+    print("\nLoading data...")
+    df = pd.read_csv(args.input_csv)
+    print(f"Loaded {len(df)} rows")
+
+    # Load cluster configuration
+    cluster_config = load_cluster_config(Path(args.cluster_config))
+    n_clusters = cluster_config['metadata']['n_clusters']
+    print(f"Number of clusters: {n_clusters}")
+
+    # Initialize SDE
+    sde = VPSDE(device=args.device)
+
+    # Initialize output dataframe
+    df_denoised = df.copy()
+
+    # Process each cluster
+    for cluster_id in range(n_clusters):
+        print(f"\n{'─'*80}")
+        print(f"Processing Cluster {cluster_id}")
+        print('─'*80)
+
+        # Get cluster features
+        cluster_key = f"cluster_{cluster_id}"
+        cluster_info = cluster_config['clusters'][cluster_key]
+        feature_names = cluster_info['features']
+        cluster_type = cluster_info.get('type', 'random_walk')
+
+        print(f"Type: {cluster_type}")
+        print(f"Features: {len(feature_names)}")
+
+        # Load model
+        model_path = Path(args.models_dir) / f"cluster_{cluster_id}_best.pt"
+        if not model_path.exists():
+            print(f"⚠️  Model not found: {model_path}")
+            print(f"    Skipping cluster {cluster_id}")
+            continue
+
+        model, checkpoint = load_model_checkpoint(model_path, args.device)
+        print(f"✓ Loaded model from {model_path}")
+        print(f"  Training loss: {checkpoint.get('loss', 'N/A'):.6f}")
+
+        # Extract feature data
+        feature_data = df[feature_names].values
+        feature_data = np.nan_to_num(feature_data, nan=0.0, posinf=0.0, neginf=0.0)
+
+        # Normalize
+        normalized_data, mean, std = normalize_features(feature_data)
+
+        # Create windows
+        windows, positions = create_windows_with_overlap(
+            normalized_data,
+            args.window_size,
+            args.stride
+        )
+        print(f"Created {len(windows)} overlapping windows")
+
+        # Denoise
+        denoised_windows = denoise_windows(
+            model, windows, sde, args.device,
+            num_steps=args.num_steps,
+            batch_size=args.batch_size
+        )
+
+        # Reconstruct
+        denoised_data = reconstruct_with_overlap_averaging(
+            denoised_windows,
+            positions,
+            len(feature_data),
+            args.window_size
+        )
+
+        # Denormalize
+        denoised_data = denormalize_features(denoised_data, mean, std)
+
+        # Update dataframe
+        for i, col in enumerate(feature_names):
+            df_denoised[col] = denoised_data[:, i]
+
+        print(f"✓ Cluster {cluster_id} completed")
+
+    # Save
+    print(f"\n{'='*80}")
+    print("Saving denoised dataset...")
+    output_path = Path(args.output_csv)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    df_denoised.to_csv(output_path, index=False)
+    print(f"✓ Saved to {output_path}")
+
+    # Summary
+    print(f"\n{'='*80}")
+    print("DENOISING COMPLETED")
+    print('='*80)
+    print(f"Original data: {args.input_csv}")
+    print(f"Denoised data: {args.output_csv}")
+    print(f"Total features processed: {sum(len(cluster_config['clusters'][f'cluster_{i}']['features']) for i in range(n_clusters))}")
+
+
+if __name__ == "__main__":
+    main()
