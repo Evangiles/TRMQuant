@@ -56,8 +56,13 @@ class TimeSeriesWindowDataset(Dataset):
         # Extract feature data
         feature_data = data[feature_cols].values  # [T, F]
 
-        # Handle NaN
-        feature_data = np.nan_to_num(feature_data, nan=0.0)
+        # Handle NaN and inf
+        feature_data = np.nan_to_num(feature_data, nan=0.0, posinf=0.0, neginf=0.0)
+
+        # Normalize features to prevent numerical instability
+        mean = np.mean(feature_data, axis=0, keepdims=True)
+        std = np.std(feature_data, axis=0, keepdims=True) + 1e-8
+        feature_data = (feature_data - mean) / std
 
         # Create windows
         self.windows = []
@@ -121,15 +126,24 @@ def train_epoch(
         while alpha_bar.dim() < x_t.dim():
             alpha_bar = alpha_bar.unsqueeze(-1)
 
-        predicted_x0 = (x_t - torch.sqrt(1.0 - alpha_bar) * predicted_noise) / torch.sqrt(alpha_bar)
+        predicted_x0 = (x_t - torch.sqrt(1.0 - alpha_bar) * predicted_noise) / (torch.sqrt(alpha_bar) + 1e-8)
+        predicted_x0 = torch.clamp(predicted_x0, -10, 10)  # Prevent extreme values
 
         # Compute loss
         loss = loss_fn(predicted_noise, noise, predicted_x0)
 
+        # Check for NaN
+        if torch.isnan(loss) or torch.isinf(loss):
+            print(f"\n⚠️  NaN/Inf detected in loss! Skipping batch...")
+            continue
+
         # Backward
         optimizer.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+
+        # Strong gradient clipping for stability
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
+
         optimizer.step()
 
         total_loss += loss.item()
@@ -148,7 +162,7 @@ def main():
     parser.add_argument("--n_layers", type=int, default=4)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--epochs", type=int, default=100)
-    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--lr", type=float, default=5e-5)  # Lower for stability
     parser.add_argument("--guidance_weight", type=float, default=0.1)
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
 

@@ -70,8 +70,8 @@ class SelectiveSSM(nn.Module):
         self.dt_proj = nn.Linear(self.dt_rank, self.d_inner, bias=True)
 
         # Initialize A (state transition matrix)
-        # Use complex-valued initialization for stability
-        A = torch.randn(self.d_inner, self.d_state)
+        # Use positive initialization for log-space stability
+        A = torch.rand(self.d_inner, self.d_state) + 0.5  # Range [0.5, 1.5]
         self.A_log = nn.Parameter(torch.log(A))  # Log-space for stability
 
         # Initialize D (skip connection parameter)
