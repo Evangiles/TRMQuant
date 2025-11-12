@@ -14,6 +14,7 @@ do
 
     uv run TinyRecursiveModels/train/train_group_denoiser.py \
         --cluster_id ${cluster_id} \
+        --data_path TinyRecursiveModels/train_only.csv \
         --epochs 10 \
         --batch_size 64
 
