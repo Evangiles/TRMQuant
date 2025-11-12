@@ -230,14 +230,26 @@ def main():
     # Initialize optimizer
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
 
+    # Learning rate scheduler with warmup
+    def get_lr_scale(epoch, warmup_epochs=5):
+        """Linear warmup then constant"""
+        if epoch < warmup_epochs:
+            return (epoch + 1) / warmup_epochs
+        return 1.0
+
     # Training loop
     print(f"\nStarting training for {args.epochs} epochs...")
     best_loss = float('inf')
 
     for epoch in range(args.epochs):
+        # Apply learning rate warmup
+        lr_scale = get_lr_scale(epoch, warmup_epochs=5)
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = args.lr * lr_scale
+
         avg_loss = train_epoch(model, dataloader, sde, loss_fn, optimizer, args.device)
 
-        print(f"Epoch {epoch+1}/{args.epochs} - Loss: {avg_loss:.6f}")
+        print(f"Epoch {epoch+1}/{args.epochs} - Loss: {avg_loss:.6f}, LR: {args.lr * lr_scale:.6f}")
 
         # Save best model
         if avg_loss < best_loss:
