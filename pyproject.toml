@@ -16,16 +16,13 @@ dependencies = [
     "lightgbm>=4.0.0",
     "catboost>=1.2.0",
 
+    # Mamba SSM (State Space Model)
+    "mamba-ssm>=1.0.0",
+    "causal-conv1d>=1.0.0",
+
     # Utilities
     "tqdm>=4.65.0",
     "einops>=0.7.0",
-]
-
-[project.optional-dependencies]
-# Training only (heavy dependencies, GPU required)
-training = [
-    "mamba-ssm>=1.0.0",
-    "causal-conv1d>=1.0.0",
 ]
 
 [tool.uv.workspace]
