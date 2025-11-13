@@ -72,13 +72,13 @@ def main():
     parser.add_argument(
         '--data_path',
         type=str,
-        default='TinyRecursiveModels/train.csv',
+        default='TinyRecursiveModels/CSVs/train_only.csv',
         help='Path to training data CSV'
     )
     parser.add_argument(
         '--output_dir',
         type=str,
-        default='TinyRecursiveModels/clustering_results',
+        default='FinancialDenoising/clustering_results',
         help='Output directory for results'
     )
     parser.add_argument(

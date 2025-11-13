@@ -133,8 +133,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--original", type=str, required=True)
     parser.add_argument("--denoised", type=str, required=True)
-    parser.add_argument("--cluster_config", type=str, default="TinyRecursiveModels/clustering_results/cluster_assignments.json")
-    parser.add_argument("--output_dir", type=str, default="TinyRecursiveModels/visualizations")
+    parser.add_argument("--cluster_config", type=str, default="FinancialDenoising/clustering_results/cluster_assignments.json")
+    parser.add_argument("--output_dir", type=str, default="FinancialDenoising/visualizations")
     parser.add_argument("--n_samples", type=int, default=3, help="Number of features to visualize per cluster")
 
     args = parser.parse_args()

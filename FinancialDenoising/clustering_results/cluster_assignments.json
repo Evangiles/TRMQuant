@@ -1,0 +1,201 @@
+{
+  "metadata": {
+    "n_clusters": 7,
+    "n_features": 94,
+    "random_state": 42
+  },
+  "clusters": {
+    "cluster_0": {
+      "feature_count": 40,
+      "features": [
+        "D4",
+        "D5",
+        "D6",
+        "D8",
+        "D9",
+        "E1",
+        "E10",
+        "E11",
+        "E13",
+        "E14",
+        "E15",
+        "E4",
+        "E6",
+        "I1",
+        "I3",
+        "I4",
+        "I6",
+        "I7",
+        "M15",
+        "M16",
+        "M8",
+        "P1",
+        "P10",
+        "P13",
+        "P8",
+        "P9",
+        "S10",
+        "S11",
+        "S4",
+        "S6",
+        "S7",
+        "S9",
+        "V1",
+        "V11",
+        "V12",
+        "V2",
+        "V3",
+        "V4",
+        "V6",
+        "V8"
+      ],
+      "characteristics": {
+        "mean_hurst": 0.2712975565401531,
+        "mean_adf_pvalue": 0.01456613264140702,
+        "mean_volatility": 0.1290919596339717,
+        "mean_autocorr": 0.9079608310579532,
+        "mean_skewness": 0.6450456902529723,
+        "mean_kurtosis": 1.8812424851088891
+      },
+      "type": "mean_reverting"
+    },
+    "cluster_1": {
+      "feature_count": 3,
+      "features": [
+        "E7",
+        "M4",
+        "S5"
+      ],
+      "characteristics": {
+        "mean_hurst": 0.17080431403478288,
+        "mean_adf_pvalue": 1.6037904137032254e-05,
+        "mean_volatility": 0.7882020408638835,
+        "mean_autocorr": 0.8500906098466577,
+        "mean_skewness": -1.8444719444556237,
+        "mean_kurtosis": 18.80841761598108
+      },
+      "type": "mean_reverting"
+    },
+    "cluster_2": {
+      "feature_count": 1,
+      "features": [
+        "E8"
+      ],
+      "characteristics": {
+        "mean_hurst": 0.20719497266303644,
+        "mean_adf_pvalue": 1.0661306966323837e-13,
+        "mean_volatility": 0.3101621923352971,
+        "mean_autocorr": 0.9551311553595608,
+        "mean_skewness": 6.137315626798554,
+        "mean_kurtosis": 91.79463869083442
+      },
+      "type": "mean_reverting"
+    },
+    "cluster_3": {
+      "feature_count": 8,
+      "features": [
+        "E12",
+        "E5",
+        "E9",
+        "I8",
+        "M13",
+        "M14",
+        "M17",
+        "M18"
+      ],
+      "characteristics": {
+        "mean_hurst": 0.5318619588326206,
+        "mean_adf_pvalue": 0.3682643889948074,
+        "mean_volatility": 0.03467795079436899,
+        "mean_autocorr": 0.9988867594743918,
+        "mean_skewness": 0.3699700482938678,
+        "mean_kurtosis": -0.0583430925198159
+      },
+      "type": "random_walk"
+    },
+    "cluster_4": {
+      "feature_count": 14,
+      "features": [
+        "E19",
+        "M2",
+        "M3",
+        "M6",
+        "P12",
+        "P5",
+        "P6",
+        "P7",
+        "S12",
+        "V10",
+        "V13",
+        "V5",
+        "V7",
+        "V9"
+      ],
+      "characteristics": {
+        "mean_hurst": 0.15405622659279214,
+        "mean_adf_pvalue": 7.898348820415313e-06,
+        "mean_volatility": 0.6777556422524222,
+        "mean_autocorr": 0.7286644109934233,
+        "mean_skewness": 2.2756922183282056,
+        "mean_kurtosis": 13.046973959359235
+      },
+      "type": "mean_reverting"
+    },
+    "cluster_5": {
+      "feature_count": 6,
+      "features": [
+        "D1",
+        "D2",
+        "D3",
+        "D7",
+        "P3",
+        "P4"
+      ],
+      "characteristics": {
+        "mean_hurst": -0.0036587910924376983,
+        "mean_adf_pvalue": 0.0,
+        "mean_volatility": 0.22468305517714224,
+        "mean_autocorr": -0.027917239737751485,
+        "mean_skewness": 3.2209118559046837,
+        "mean_kurtosis": 13.96201297569221
+      },
+      "type": "mean_reverting"
+    },
+    "cluster_6": {
+      "feature_count": 22,
+      "features": [
+        "E16",
+        "E17",
+        "E18",
+        "E2",
+        "E20",
+        "E3",
+        "I2",
+        "I5",
+        "I9",
+        "M1",
+        "M10",
+        "M11",
+        "M12",
+        "M5",
+        "M7",
+        "M9",
+        "P11",
+        "P2",
+        "S1",
+        "S2",
+        "S3",
+        "S8"
+      ],
+      "characteristics": {
+        "mean_hurst": 0.43975525355778095,
+        "mean_adf_pvalue": 0.04071145144406904,
+        "mean_volatility": 0.31656542505712815,
+        "mean_autocorr": 0.9926998341942515,
+        "mean_skewness": 0.09124129918242024,
+        "mean_kurtosis": 0.615723134559587
+      },
+      "type": "mean_reverting"
+    }
+  }
+}

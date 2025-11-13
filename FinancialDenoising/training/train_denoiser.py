@@ -171,9 +171,9 @@ def train_epoch(
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--cluster_id", type=int, required=True, help="Cluster ID to train")
-    parser.add_argument("--data_path", type=str, default="TinyRecursiveModels/train.csv")
-    parser.add_argument("--cluster_config", type=str, default="TinyRecursiveModels/clustering_results/cluster_assignments.json")
-    parser.add_argument("--output_dir", type=str, default="TinyRecursiveModels/trained_models")
+    parser.add_argument("--data_path", type=str, default="TinyRecursiveModels/CSVs/train_only.csv")
+    parser.add_argument("--cluster_config", type=str, default="FinancialDenoising/clustering_results/cluster_assignments.json")
+    parser.add_argument("--output_dir", type=str, default="FinancialDenoising/trained_models")
     parser.add_argument("--window_size", type=int, default=60)
     parser.add_argument("--d_model", type=int, default=128)
     parser.add_argument("--n_layers", type=int, default=4)
