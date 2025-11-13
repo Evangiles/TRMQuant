@@ -93,8 +93,16 @@ def denoise_windows(
             dtype=torch.long
         )
 
-        # Single denoising pass
-        denoised = model(batch_tensor, t)
+        # Model predicts NOISE (not clean signal!)
+        predicted_noise = model(batch_tensor, t)
+
+        # Recover clean signal using VP-SDE formula: x0 = (x_t - sqrt(1-alpha_bar) * noise) / sqrt(alpha_bar)
+        alpha_bar = sde.alphas_cumprod[t]
+        while alpha_bar.dim() < batch_tensor.dim():
+            alpha_bar = alpha_bar.unsqueeze(-1)
+
+        denoised = (batch_tensor - torch.sqrt(1.0 - alpha_bar) * predicted_noise) / (torch.sqrt(alpha_bar) + 1e-8)
+        denoised = torch.clamp(denoised, -10, 10)  # Stability
 
         denoised_windows.append(denoised.cpu().numpy())
 
