@@ -33,11 +33,13 @@ def get_feature_columns(df: pd.DataFrame) -> list:
     Assumes target columns are: target, target_2d, target_5d
     All other numeric columns are features.
 
+    EXCLUDES D* features (D1-D9): Binary/dummy data, no denoising needed.
+
     Args:
         df: Input dataframe
 
     Returns:
-        List of feature column names
+        List of feature column names (excluding D* features)
     """
     target_cols = ['target', 'target_2d', 'target_5d']
 
@@ -48,10 +50,13 @@ def get_feature_columns(df: pd.DataFrame) -> list:
         'market_forward_excess_returns'
     ]
 
-    exclude_cols = target_cols + ['date_id'] + leakage_cols
+    # EXCLUDE D* features (binary/dummy data, keep original)
+    d_features = [f'D{i}' for i in range(1, 10)]  # D1-D9
+
+    exclude_cols = target_cols + ['date_id'] + leakage_cols + d_features
     all_cols = df.columns.tolist()
 
-    # Remove target columns, date_id, leakage features, and non-numeric columns
+    # Remove target columns, date_id, leakage features, D* features, and non-numeric columns
     feature_cols = [
         col for col in all_cols
         if col not in exclude_cols and df[col].dtype in ['float64', 'int64']
