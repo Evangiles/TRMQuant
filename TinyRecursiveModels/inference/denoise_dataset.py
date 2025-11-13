@@ -1,14 +1,18 @@
 """
-Denoise Complete Dataset with Trained Group-Specific Models
+Denoise Complete Dataset with Trained Group-Specific Models (NO TEMPORAL LEAKAGE)
 
-Applies trained denoiser models to entire dataset with overlap averaging
-for smooth reconstruction.
+Applies trained denoiser models using non-overlapping windows:
+- stride=window_size (default 60) → No overlap between windows
+- Window [0:60] processes rows 0-59 independently
+- Window [60:120] processes rows 60-119 independently
+- No overlap → No temporal leakage → Suitable for real-time deployment
 
 Usage:
     python inference/denoise_dataset.py \
-        --input_csv train.csv \
-        --output_csv train_denoised.csv \
-        --models_dir trained_models
+        --input_csv train_only.csv \
+        --output_csv train_denoised_no_leakage.csv \
+        --models_dir trained_models \
+        --stride 60
 """
 
 import sys
@@ -97,18 +101,23 @@ def denoise_windows(
     return np.concatenate(denoised_windows, axis=0)
 
 
-def create_windows_with_overlap(
+def create_windows_no_overlap(
     data: np.ndarray,
     window_size: int,
     stride: int
 ) -> tuple:
     """
-    Create overlapping windows and position information.
+    Create non-overlapping windows.
+
+    With stride=window_size (e.g., 60), windows are completely independent:
+    - Window [0:60] processes rows 0-59
+    - Window [60:120] processes rows 60-119
+    - No overlap → No temporal leakage
 
     Args:
         data: [T, F] time series data
         window_size: Window size
-        stride: Stride for sliding window
+        stride: Stride for sliding window (use stride=window_size for no overlap)
 
     Returns:
         (windows, positions) where:
@@ -125,39 +134,39 @@ def create_windows_with_overlap(
     return np.array(windows), np.array(positions)
 
 
-def reconstruct_with_overlap_averaging(
+def reconstruct_no_overlap(
     denoised_windows: np.ndarray,
     positions: np.ndarray,
     total_length: int,
-    window_size: int
+    window_size: int,
+    original_data: np.ndarray
 ) -> np.ndarray:
     """
-    Reconstruct full time series using overlap averaging.
+    Reconstruct full time series from non-overlapping windows.
+
+    With stride=window_size, each window is independent:
+    - Window [0:60] updates reconstructed[0:60]
+    - Window [60:120] updates reconstructed[60:120]
+    - No overlap → No temporal leakage
+
+    Remaining points at the end use original data.
 
     Args:
         denoised_windows: [N, window_size, F]
         positions: [N] start positions
         total_length: Original time series length
         window_size: Window size
+        original_data: Original data for remaining points
 
     Returns:
         Reconstructed time series [total_length, F]
     """
-    n_features = denoised_windows.shape[2]
+    # Initialize with original data
+    reconstructed = original_data.copy()
 
-    # Initialize accumulation arrays
-    reconstructed = np.zeros((total_length, n_features))
-    counts = np.zeros((total_length, n_features))
-
-    # Accumulate denoised values
+    # Update each window's full range (no overlap)
     for window, pos in zip(denoised_windows, positions):
-        reconstructed[pos:pos + window_size] += window
-        counts[pos:pos + window_size] += 1
-
-    # Average overlapping regions
-    # Avoid division by zero
-    counts = np.maximum(counts, 1)
-    reconstructed = reconstructed / counts
+        reconstructed[pos:pos + window_size] = window
 
     return reconstructed
 
@@ -174,7 +183,7 @@ def main():
     parser.add_argument("--cluster_config", type=str, default="TinyRecursiveModels/clustering_results/cluster_assignments.json")
     parser.add_argument("--models_dir", type=str, default="TinyRecursiveModels/trained_models")
     parser.add_argument("--window_size", type=int, default=60)
-    parser.add_argument("--stride", type=int, default=30)
+    parser.add_argument("--stride", type=int, default=60)  # Changed from 30 to 60 for causal (no overlap)
     parser.add_argument("--num_steps", type=int, default=50)
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
@@ -253,13 +262,13 @@ def main():
         normalized_data = (feature_data - train_mean) / train_std
         mean, std = train_mean, train_std
 
-        # Create windows
-        windows, positions = create_windows_with_overlap(
+        # Create non-overlapping windows (stride=window_size eliminates temporal leakage)
+        windows, positions = create_windows_no_overlap(
             normalized_data,
             args.window_size,
             args.stride
         )
-        print(f"Created {len(windows)} overlapping windows")
+        print(f"Created {len(windows)} non-overlapping windows (stride={args.stride}, no temporal leakage)")
 
         # Denoise
         denoised_windows = denoise_windows(
@@ -268,12 +277,13 @@ def main():
             batch_size=args.batch_size
         )
 
-        # Reconstruct
-        denoised_data = reconstruct_with_overlap_averaging(
+        # Reconstruct from non-overlapping windows (no temporal leakage)
+        denoised_data = reconstruct_no_overlap(
             denoised_windows,
             positions,
             len(feature_data),
-            args.window_size
+            args.window_size,
+            normalized_data  # Original data for remaining points at end
         )
 
         # Denormalize
