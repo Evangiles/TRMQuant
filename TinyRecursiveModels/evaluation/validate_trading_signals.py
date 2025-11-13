@@ -2,11 +2,19 @@
 Validate Denoising with Trading Signal Performance
 
 Compares original vs denoised data using actual trading signals and portfolio metrics:
+- Adjusted Sharpe Ratio (Competition Metric)
 - Sharpe Ratio
 - Cumulative Returns
 - Maximum Drawdown (MDD)
 - Win Rate
-- Profit Factor
+- Volatility Penalty
+- Return Penalty
+
+Uses competition's position-based strategy (0-2 range) with:
+- Geometric mean for annualized returns
+- Volatility penalty when exceeding 1.2x market volatility
+- Return penalty for underperforming market
+- Adjusted Sharpe = Sharpe / (vol_penalty * return_penalty)
 
 Uses Purged/Embargo Cross-Validation for proper time series validation.
 """
@@ -68,71 +76,109 @@ def purged_embargo_cv(df, n_splits=5, embargo_pct=0.01, purge_pct=0.01):
         yield train_idx, test_idx
 
 
-def generate_trading_signals(predictions, returns, long_pct=0.2, short_pct=0.2):
+def generate_trading_signals(predictions, returns, risk_free_rates):
     """
-    Generate long/short signals based on model predictions.
+    Generate position-based strategy following competition metric.
+
+    Competition formula:
+    - position = scaled prediction (0 to 2 range)
+    - strategy_returns = rf * (1 - position) + position * forward_returns
+    - Sharpe with geometric mean and volatility/return penalties
 
     Args:
         predictions: Model predicted returns
         returns: Actual forward returns
-        long_pct: Top percentile to go long (default: 20%)
-        short_pct: Bottom percentile to go short (default: 20%)
+        risk_free_rates: Risk-free rates
 
     Returns:
-        dict with trading metrics
+        dict with competition metrics
     """
-    # Rank predictions
-    pred_rank = pd.Series(predictions).rank(pct=True)
+    MIN_INVESTMENT = 0
+    MAX_INVESTMENT = 2
+    TRADING_DAYS_PER_YR = 252
 
-    # Generate signals: 1 (long), -1 (short), 0 (neutral)
-    signals = np.zeros_like(predictions)
-    signals[pred_rank >= (1 - long_pct)] = 1  # Top 20%
-    signals[pred_rank <= short_pct] = -1      # Bottom 20%
+    # Convert predictions to positions (0~2 range)
+    # Normalize predictions to [0, 2] range
+    pred_min = np.min(predictions)
+    pred_max = np.max(predictions)
+    if pred_max - pred_min > 0:
+        positions = (predictions - pred_min) / (pred_max - pred_min) * MAX_INVESTMENT
+    else:
+        positions = np.ones_like(predictions)  # Default to 100% invested
 
-    # Calculate returns for each position
-    position_returns = signals * returns
+    # Clip to valid range
+    positions = np.clip(positions, MIN_INVESTMENT, MAX_INVESTMENT)
 
-    # Only consider non-zero positions
-    active_returns = position_returns[signals != 0]
+    # Calculate strategy returns (competition formula)
+    strategy_returns = risk_free_rates * (1 - positions) + positions * returns
 
-    if len(active_returns) == 0:
+    # Calculate strategy's Sharpe ratio
+    strategy_excess_returns = strategy_returns - risk_free_rates
+
+    # Geometric mean (competition uses this!)
+    strategy_excess_cumulative = (1 + strategy_excess_returns).prod()
+    if strategy_excess_cumulative <= 0:
         return None
 
-    # Portfolio metrics
-    mean_return = np.mean(active_returns)
-    std_return = np.std(active_returns)
-    sharpe_ratio = (mean_return / std_return) * np.sqrt(252) if std_return > 0 else 0
+    strategy_mean_excess_return = strategy_excess_cumulative ** (1 / len(strategy_returns)) - 1
+    strategy_std = strategy_returns.std()
 
-    # Cumulative returns
-    cumulative_return = np.sum(active_returns)
+    if strategy_std == 0:
+        return None
+
+    sharpe = strategy_mean_excess_return / strategy_std * np.sqrt(TRADING_DAYS_PER_YR)
+    strategy_volatility = strategy_std * np.sqrt(TRADING_DAYS_PER_YR) * 100
+
+    # Calculate market return and volatility
+    market_excess_returns = returns - risk_free_rates
+    market_excess_cumulative = (1 + market_excess_returns).prod()
+
+    if market_excess_cumulative <= 0:
+        return None
+
+    market_mean_excess_return = market_excess_cumulative ** (1 / len(returns)) - 1
+    market_std = returns.std()
+    market_volatility = market_std * np.sqrt(TRADING_DAYS_PER_YR) * 100
+
+    # Calculate volatility penalty (competition formula)
+    excess_vol = max(0, strategy_volatility / market_volatility - 1.2) if market_volatility > 0 else 0
+    vol_penalty = 1 + excess_vol
+
+    # Calculate return penalty (competition formula)
+    return_gap = max(0, (market_mean_excess_return - strategy_mean_excess_return) * 100 * TRADING_DAYS_PER_YR)
+    return_penalty = 1 + (return_gap ** 2) / 100
+
+    # Adjusted Sharpe ratio (competition metric!)
+    adjusted_sharpe = sharpe / (vol_penalty * return_penalty)
+
+    # Additional metrics for analysis
+    cumulative_return = (1 + strategy_returns).prod() - 1
 
     # Maximum Drawdown
-    cumsum = np.cumsum(active_returns)
+    cumsum = np.cumsum(strategy_returns)
     running_max = np.maximum.accumulate(cumsum)
     drawdown = cumsum - running_max
     max_drawdown = np.min(drawdown)
 
     # Win rate
-    wins = active_returns > 0
+    wins = strategy_returns > risk_free_rates
     win_rate = np.mean(wins)
 
-    # Profit factor
-    gross_profit = np.sum(active_returns[active_returns > 0])
-    gross_loss = np.abs(np.sum(active_returns[active_returns < 0]))
-    profit_factor = gross_profit / gross_loss if gross_loss > 0 else np.inf
-
     return {
-        'sharpe_ratio': sharpe_ratio,
+        'adjusted_sharpe': min(adjusted_sharpe, 1_000_000),  # Cap at 1M like competition
+        'sharpe_ratio': sharpe,
         'cumulative_return': cumulative_return,
         'max_drawdown': max_drawdown,
         'win_rate': win_rate,
-        'profit_factor': profit_factor,
-        'mean_return': mean_return,
-        'n_trades': len(active_returns)
+        'mean_return': strategy_mean_excess_return,
+        'volatility': strategy_volatility,
+        'vol_penalty': vol_penalty,
+        'return_penalty': return_penalty,
+        'n_trades': len(strategy_returns)
     }
 
 
-def evaluate_trading_model(model_name, model, X_train, y_train, X_test, y_test):
+def evaluate_trading_model(model_name, model, X_train, y_train, X_test, y_test, rf_test):
     """Train model and evaluate trading performance."""
     # Train
     model.fit(X_train, y_train)
@@ -141,7 +187,7 @@ def evaluate_trading_model(model_name, model, X_train, y_train, X_test, y_test):
     y_pred = model.predict(X_test)
 
     # Generate trading signals and calculate metrics
-    trading_metrics = generate_trading_signals(y_pred, y_test)
+    trading_metrics = generate_trading_signals(y_pred, y_test, rf_test)
 
     if trading_metrics is None:
         return None
@@ -162,6 +208,7 @@ def run_trading_cv_experiment(df, feature_cols, target_col, n_splits=5):
     # Prepare data
     X = df[feature_cols].fillna(0).values
     y = df[target_col].fillna(0).values
+    rf = df['risk_free_rate'].fillna(0).values  # Extract risk-free rates
 
     # Models
     models = {
@@ -205,19 +252,20 @@ def run_trading_cv_experiment(df, feature_cols, target_col, n_splits=5):
 
         X_train, X_test = X[train_idx], X[test_idx]
         y_train, y_test = y[train_idx], y[test_idx]
+        rf_test = rf[test_idx]  # Risk-free rates for test set
 
         # Evaluate each model
         for model_name, model in models.items():
-            result = evaluate_trading_model(model_name, model, X_train, y_train, X_test, y_test)
+            result = evaluate_trading_model(model_name, model, X_train, y_train, X_test, y_test, rf_test)
 
             if result is not None:
                 result['fold'] = fold + 1
                 results.append(result)
 
-                print(f"  {model_name:15s} - Sharpe: {result['sharpe_ratio']:6.3f}, "
+                print(f"  {model_name:15s} - AdjSharpe: {result['adjusted_sharpe']:6.3f}, "
+                      f"Sharpe: {result['sharpe_ratio']:6.3f}, "
                       f"Cum.Ret: {result['cumulative_return']:7.4f}, "
-                      f"MDD: {result['max_drawdown']:7.4f}, "
-                      f"WinRate: {result['win_rate']:.2%}")
+                      f"MDD: {result['max_drawdown']:7.4f}")
 
     return pd.DataFrame(results)
 
@@ -225,11 +273,13 @@ def run_trading_cv_experiment(df, feature_cols, target_col, n_splits=5):
 def summarize_trading_results(results_df):
     """Compute average trading metrics across folds."""
     summary = results_df.groupby('model').agg({
+        'adjusted_sharpe': ['mean', 'std'],
         'sharpe_ratio': ['mean', 'std'],
         'cumulative_return': ['mean', 'std'],
         'max_drawdown': ['mean', 'std'],
         'win_rate': ['mean', 'std'],
-        'profit_factor': ['mean', 'std'],
+        'vol_penalty': ['mean', 'std'],
+        'return_penalty': ['mean', 'std'],
         'ic': ['mean', 'std']
     }).round(4)
 
@@ -255,7 +305,8 @@ def compare_trading_performance(original_csv, denoised_csv, n_splits=5):
     feature_cols, target_col = get_feature_target_columns(df_original)
     print(f"Features: {len(feature_cols)}")
     print(f"Target: {target_col}")
-    print(f"Signal strategy: Long top 20%, Short bottom 20%")
+    print(f"Strategy: Position-based (0-2 range) with risk-free rate consideration")
+    print(f"Metric: Adjusted Sharpe with geometric mean + penalties")
 
     # Experiment 1: Original data
     print("\n" + "=" * 80)
@@ -285,6 +336,21 @@ def compare_trading_performance(original_csv, denoised_csv, n_splits=5):
     print("COMPARISON: DENOISED vs ORIGINAL")
     print("=" * 80)
 
+    # Adjusted Sharpe comparison (PRIMARY METRIC)
+    summary_orig_adj = results_original.groupby('model')['adjusted_sharpe'].mean()
+    summary_denoise_adj = results_denoised.groupby('model')['adjusted_sharpe'].mean()
+
+    comparison_adj = pd.DataFrame({
+        'Original_AdjSharpe': summary_orig_adj,
+        'Denoised_AdjSharpe': summary_denoise_adj,
+        'Improvement': summary_denoise_adj - summary_orig_adj,
+        'Improvement_%': ((summary_denoise_adj - summary_orig_adj) / np.abs(summary_orig_adj) * 100).fillna(0)
+    }).round(4)
+
+    print("\n[Adjusted Sharpe Ratio Comparison (COMPETITION METRIC)]:")
+    print(comparison_adj)
+
+    # Regular Sharpe comparison (for reference)
     summary_orig = results_original.groupby('model')['sharpe_ratio'].mean()
     summary_denoise = results_denoised.groupby('model')['sharpe_ratio'].mean()
 
@@ -295,7 +361,7 @@ def compare_trading_performance(original_csv, denoised_csv, n_splits=5):
         'Improvement_%': ((summary_denoise - summary_orig) / np.abs(summary_orig) * 100).fillna(0)
     }).round(4)
 
-    print("\n[Sharpe Ratio Comparison]:")
+    print("\n[Sharpe Ratio Comparison (Reference)]:")
     print(comparison)
 
     # Cumulative Return comparison
@@ -317,7 +383,8 @@ def compare_trading_performance(original_csv, denoised_csv, n_splits=5):
 
     results_original.to_csv(output_dir / "original_trading_results.csv", index=False)
     results_denoised.to_csv(output_dir / "denoised_trading_results.csv", index=False)
-    comparison.to_csv(output_dir / "trading_comparison.csv")
+    comparison_adj.to_csv(output_dir / "trading_adjusted_sharpe_comparison.csv")
+    comparison.to_csv(output_dir / "trading_sharpe_comparison.csv")
     comparison_ret.to_csv(output_dir / "trading_returns_comparison.csv")
 
     print(f"\n[SUCCESS] Results saved to {output_dir}/")
@@ -327,16 +394,18 @@ def compare_trading_performance(original_csv, denoised_csv, n_splits=5):
     print("FINAL VERDICT")
     print("=" * 80)
 
+    avg_adj_sharpe_improvement = comparison_adj['Improvement_%'].mean()
     avg_sharpe_improvement = comparison['Improvement_%'].mean()
     avg_return_improvement = comparison_ret['Improvement'].mean()
 
-    print(f"\nAverage Sharpe Ratio Improvement: {avg_sharpe_improvement:.2f}%")
+    print(f"\nAverage Adjusted Sharpe Ratio Improvement (COMPETITION): {avg_adj_sharpe_improvement:.2f}%")
+    print(f"Average Sharpe Ratio Improvement (Reference): {avg_sharpe_improvement:.2f}%")
     print(f"Average Cumulative Return Improvement: {avg_return_improvement:.4f}")
 
-    if avg_sharpe_improvement > 20 and avg_return_improvement > 0:
+    if avg_adj_sharpe_improvement > 20 and avg_return_improvement > 0:
         print("\n[EFFECTIVE] DENOISING HIGHLY EFFECTIVE FOR TRADING")
         print("   Significant improvement in both risk-adjusted returns and absolute returns")
-    elif avg_sharpe_improvement > 0 and avg_return_improvement > 0:
+    elif avg_adj_sharpe_improvement > 0 and avg_return_improvement > 0:
         print("\n[MARGINAL] DENOISING SHOWS POSITIVE IMPACT")
         print("   Modest improvement in trading performance")
     else:
