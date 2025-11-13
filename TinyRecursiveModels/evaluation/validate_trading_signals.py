@@ -76,7 +76,7 @@ def purged_embargo_cv(df, n_splits=5, embargo_pct=0.01, purge_pct=0.01):
         yield train_idx, test_idx
 
 
-def generate_trading_signals(predictions, returns, risk_free_rates):
+def generate_trading_signals(predictions, returns, risk_free_rates, train_min=None, train_max=None):
     """
     Generate position-based strategy following competition metric.
 
@@ -89,6 +89,8 @@ def generate_trading_signals(predictions, returns, risk_free_rates):
         predictions: Model predicted returns
         returns: Actual forward returns
         risk_free_rates: Risk-free rates
+        train_min: Min value from training predictions (for leak-free scaling)
+        train_max: Max value from training predictions (for leak-free scaling)
 
     Returns:
         dict with competition metrics
@@ -98,9 +100,15 @@ def generate_trading_signals(predictions, returns, risk_free_rates):
     TRADING_DAYS_PER_YR = 252
 
     # Convert predictions to positions (0~2 range)
-    # Normalize predictions to [0, 2] range
-    pred_min = np.min(predictions)
-    pred_max = np.max(predictions)
+    # Use train set statistics to prevent test set leakage
+    if train_min is not None and train_max is not None:
+        pred_min = train_min
+        pred_max = train_max
+    else:
+        # Fallback: use test set statistics (NOT RECOMMENDED for production)
+        pred_min = np.min(predictions)
+        pred_max = np.max(predictions)
+
     if pred_max - pred_min > 0:
         positions = (predictions - pred_min) / (pred_max - pred_min) * MAX_INVESTMENT
     else:
@@ -179,15 +187,21 @@ def generate_trading_signals(predictions, returns, risk_free_rates):
 
 
 def evaluate_trading_model(model_name, model, X_train, y_train, X_test, y_test, rf_test):
-    """Train model and evaluate trading performance."""
+    """Train model and evaluate trading performance (LEAK-FREE)."""
     # Train
     model.fit(X_train, y_train)
 
-    # Predict
-    y_pred = model.predict(X_test)
+    # Predict on BOTH train and test (train for scaling statistics)
+    y_pred_train = model.predict(X_train)
+    y_pred_test = model.predict(X_test)
+
+    # CRITICAL: Use TRAIN predictions for min/max scaling (prevents test set leakage)
+    train_min = np.min(y_pred_train)
+    train_max = np.max(y_pred_train)
 
     # Generate trading signals and calculate metrics
-    trading_metrics = generate_trading_signals(y_pred, y_test, rf_test)
+    trading_metrics = generate_trading_signals(y_pred_test, y_test, rf_test,
+                                                train_min=train_min, train_max=train_max)
 
     if trading_metrics is None:
         return None
@@ -196,7 +210,7 @@ def evaluate_trading_model(model_name, model, X_train, y_train, X_test, y_test, 
     trading_metrics['model'] = model_name
 
     # Also include IC for reference
-    ic = np.corrcoef(y_test, y_pred)[0, 1]
+    ic = np.corrcoef(y_test, y_pred_test)[0, 1]
     trading_metrics['ic'] = ic
 
     return trading_metrics
