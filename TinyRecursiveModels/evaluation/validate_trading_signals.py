@@ -1,5 +1,5 @@
 """
-Validate Denoising with Trading Signal Performance
+Validate Denoising with Trading Signal Performance (80/20 Holdout)
 
 Compares original vs denoised data using actual trading signals and portfolio metrics:
 - Adjusted Sharpe Ratio (Competition Metric)
@@ -16,7 +16,7 @@ Uses competition's position-based strategy (0-2 range) with:
 - Return penalty for underperforming market
 - Adjusted Sharpe = Sharpe / (vol_penalty * return_penalty)
 
-Uses Purged/Embargo Cross-Validation for proper time series validation.
+Uses simple 80/20 holdout validation (train_only.csv → val_only.csv).
 """
 
 import argparse
@@ -44,36 +44,6 @@ def get_feature_target_columns(df):
     feature_cols = [col for col in df.columns if col not in exclude_cols]
     target_col = 'forward_returns'
     return feature_cols, target_col
-
-
-def purged_embargo_cv(df, n_splits=5, embargo_pct=0.01, purge_pct=0.01):
-    """Purged/Embargo Cross-Validation for time series."""
-    n_samples = len(df)
-    embargo_size = int(n_samples * embargo_pct)
-    purge_size = int(n_samples * purge_pct)
-    test_size = n_samples // n_splits
-
-    for i in range(n_splits):
-        # Test set
-        test_start = i * test_size
-        test_end = test_start + test_size
-        test_idx = np.arange(test_start, test_end)
-
-        # Purge: remove samples close to test set boundaries
-        purge_start = max(0, test_start - purge_size)
-        purge_end = min(n_samples, test_end + purge_size)
-
-        # Embargo: remove additional samples after test set
-        embargo_end = min(n_samples, test_end + embargo_size)
-
-        # Train set: everything except test, purge, and embargo regions
-        train_idx = np.concatenate([
-            np.arange(0, purge_start),
-            np.arange(embargo_end, n_samples)
-        ])
-
-        assert len(np.intersect1d(train_idx, test_idx)) == 0
-        yield train_idx, test_idx
 
 
 def generate_trading_signals(predictions, returns, risk_free_rates, train_min=None, train_max=None):
@@ -216,13 +186,17 @@ def evaluate_trading_model(model_name, model, X_train, y_train, X_test, y_test, 
     return trading_metrics
 
 
-def run_trading_cv_experiment(df, feature_cols, target_col, n_splits=5):
-    """Run cross-validation with trading signal evaluation."""
+def run_holdout_evaluation(df_train, df_val, feature_cols, target_col):
+    """Run simple 80/20 holdout evaluation."""
 
-    # Prepare data
-    X = df[feature_cols].fillna(0).values
-    y = df[target_col].fillna(0).values
-    rf = df['risk_free_rate'].fillna(0).values  # Extract risk-free rates
+    # Prepare train data
+    X_train = df_train[feature_cols].fillna(0).values
+    y_train = df_train[target_col].fillna(0).values
+
+    # Prepare val data
+    X_val = df_val[feature_cols].fillna(0).values
+    y_val = df_val[target_col].fillna(0).values
+    rf_val = df_val['risk_free_rate'].fillna(0).values
 
     # Models
     models = {
@@ -257,66 +231,52 @@ def run_trading_cv_experiment(df, feature_cols, target_col, n_splits=5):
     # Results storage
     results = []
 
-    print(f"\nRunning {n_splits}-fold Purged/Embargo CV with Trading Signals...")
+    print(f"\nRunning Holdout Evaluation (Train: {len(X_train)}, Val: {len(X_val)})...")
     print("=" * 80)
 
-    for fold, (train_idx, test_idx) in enumerate(purged_embargo_cv(df, n_splits=n_splits)):
-        print(f"\nFold {fold + 1}/{n_splits}")
-        print(f"  Train samples: {len(train_idx)}, Test samples: {len(test_idx)}")
+    # Evaluate each model
+    for model_name, model in models.items():
+        result = evaluate_trading_model(model_name, model, X_train, y_train, X_val, y_val, rf_val)
 
-        X_train, X_test = X[train_idx], X[test_idx]
-        y_train, y_test = y[train_idx], y[test_idx]
-        rf_test = rf[test_idx]  # Risk-free rates for test set
+        if result is not None:
+            results.append(result)
 
-        # Evaluate each model
-        for model_name, model in models.items():
-            result = evaluate_trading_model(model_name, model, X_train, y_train, X_test, y_test, rf_test)
-
-            if result is not None:
-                result['fold'] = fold + 1
-                results.append(result)
-
-                print(f"  {model_name:15s} - AdjSharpe: {result['adjusted_sharpe']:6.3f}, "
-                      f"Sharpe: {result['sharpe_ratio']:6.3f}, "
-                      f"Cum.Ret: {result['cumulative_return']:7.4f}, "
-                      f"MDD: {result['max_drawdown']:7.4f}")
+            print(f"  {model_name:15s} - AdjSharpe: {result['adjusted_sharpe']:6.3f}, "
+                  f"Sharpe: {result['sharpe_ratio']:6.3f}, "
+                  f"Cum.Ret: {result['cumulative_return']:7.4f}, "
+                  f"MDD: {result['max_drawdown']:7.4f}")
 
     return pd.DataFrame(results)
 
 
 def summarize_trading_results(results_df):
-    """Compute average trading metrics across folds."""
-    summary = results_df.groupby('model').agg({
-        'adjusted_sharpe': ['mean', 'std'],
-        'sharpe_ratio': ['mean', 'std'],
-        'cumulative_return': ['mean', 'std'],
-        'max_drawdown': ['mean', 'std'],
-        'win_rate': ['mean', 'std'],
-        'vol_penalty': ['mean', 'std'],
-        'return_penalty': ['mean', 'std'],
-        'ic': ['mean', 'std']
-    }).round(4)
-
+    """Compute trading metrics summary."""
+    summary = results_df[['model', 'adjusted_sharpe', 'sharpe_ratio', 'cumulative_return',
+                           'max_drawdown', 'win_rate', 'vol_penalty', 'return_penalty', 'ic']].set_index('model')
     return summary
 
 
-def compare_trading_performance(original_csv, denoised_csv, n_splits=5):
-    """Compare trading performance: original vs denoised datasets."""
+def compare_trading_performance(train_original_csv, train_denoised_csv, val_original_csv, val_denoised_csv):
+    """Compare trading performance: original vs denoised datasets (80/20 holdout)."""
 
     print("=" * 80)
-    print("TRADING SIGNAL VALIDATION")
+    print("TRADING SIGNAL VALIDATION (80/20 HOLDOUT)")
     print("=" * 80)
 
     # Load data
     print("\nLoading datasets...")
-    df_original = pd.read_csv(original_csv)
-    df_denoised = pd.read_csv(denoised_csv)
+    df_train_original = pd.read_csv(train_original_csv)
+    df_train_denoised = pd.read_csv(train_denoised_csv)
+    df_val_original = pd.read_csv(val_original_csv)
+    df_val_denoised = pd.read_csv(val_denoised_csv)
 
-    print(f"Original: {len(df_original)} rows")
-    print(f"Denoised: {len(df_denoised)} rows")
+    print(f"Train Original: {len(df_train_original)} rows")
+    print(f"Train Denoised: {len(df_train_denoised)} rows")
+    print(f"Val Original: {len(df_val_original)} rows")
+    print(f"Val Denoised: {len(df_val_denoised)} rows")
 
     # Get columns
-    feature_cols, target_col = get_feature_target_columns(df_original)
+    feature_cols, target_col = get_feature_target_columns(df_train_original)
     print(f"Features: {len(feature_cols)}")
     print(f"Target: {target_col}")
     print(f"Strategy: Position-based (0-2 range) with risk-free rate consideration")
@@ -326,17 +286,17 @@ def compare_trading_performance(original_csv, denoised_csv, n_splits=5):
     print("\n" + "=" * 80)
     print("EXPERIMENT 1: ORIGINAL DATA")
     print("=" * 80)
-    results_original = run_trading_cv_experiment(df_original, feature_cols, target_col, n_splits)
+    results_original = run_holdout_evaluation(df_train_original, df_val_original, feature_cols, target_col)
 
     # Experiment 2: Denoised data
     print("\n" + "=" * 80)
     print("EXPERIMENT 2: DENOISED DATA")
     print("=" * 80)
-    results_denoised = run_trading_cv_experiment(df_denoised, feature_cols, target_col, n_splits)
+    results_denoised = run_holdout_evaluation(df_train_denoised, df_val_denoised, feature_cols, target_col)
 
     # Summary
     print("\n" + "=" * 80)
-    print("SUMMARY: AVERAGE TRADING METRICS ACROSS FOLDS")
+    print("SUMMARY: TRADING METRICS")
     print("=" * 80)
 
     print("\n[Original Data]:")
@@ -351,8 +311,8 @@ def compare_trading_performance(original_csv, denoised_csv, n_splits=5):
     print("=" * 80)
 
     # Adjusted Sharpe comparison (PRIMARY METRIC)
-    summary_orig_adj = results_original.groupby('model')['adjusted_sharpe'].mean()
-    summary_denoise_adj = results_denoised.groupby('model')['adjusted_sharpe'].mean()
+    summary_orig_adj = results_original.set_index('model')['adjusted_sharpe']
+    summary_denoise_adj = results_denoised.set_index('model')['adjusted_sharpe']
 
     comparison_adj = pd.DataFrame({
         'Original_AdjSharpe': summary_orig_adj,
@@ -365,8 +325,8 @@ def compare_trading_performance(original_csv, denoised_csv, n_splits=5):
     print(comparison_adj)
 
     # Regular Sharpe comparison (for reference)
-    summary_orig = results_original.groupby('model')['sharpe_ratio'].mean()
-    summary_denoise = results_denoised.groupby('model')['sharpe_ratio'].mean()
+    summary_orig = results_original.set_index('model')['sharpe_ratio']
+    summary_denoise = results_denoised.set_index('model')['sharpe_ratio']
 
     comparison = pd.DataFrame({
         'Original_Sharpe': summary_orig,
@@ -379,8 +339,8 @@ def compare_trading_performance(original_csv, denoised_csv, n_splits=5):
     print(comparison)
 
     # Cumulative Return comparison
-    summary_orig_ret = results_original.groupby('model')['cumulative_return'].mean()
-    summary_denoise_ret = results_denoised.groupby('model')['cumulative_return'].mean()
+    summary_orig_ret = results_original.set_index('model')['cumulative_return']
+    summary_denoise_ret = results_denoised.set_index('model')['cumulative_return']
 
     comparison_ret = pd.DataFrame({
         'Original_Return': summary_orig_ret,
@@ -428,17 +388,19 @@ def compare_trading_performance(original_csv, denoised_csv, n_splits=5):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Validate denoising with trading signals")
-    parser.add_argument("--original", type=str, required=True, help="Path to original CSV")
-    parser.add_argument("--denoised", type=str, required=True, help="Path to denoised CSV")
-    parser.add_argument("--n_splits", type=int, default=5, help="Number of CV folds")
+    parser = argparse.ArgumentParser(description="Validate denoising with trading signals (80/20 holdout)")
+    parser.add_argument("--train_original", type=str, required=True, help="Path to train original CSV")
+    parser.add_argument("--train_denoised", type=str, required=True, help="Path to train denoised CSV")
+    parser.add_argument("--val_original", type=str, required=True, help="Path to val original CSV")
+    parser.add_argument("--val_denoised", type=str, required=True, help="Path to val denoised CSV")
 
     args = parser.parse_args()
 
     compare_trading_performance(
-        args.original,
-        args.denoised,
-        n_splits=args.n_splits
+        args.train_original,
+        args.train_denoised,
+        args.val_original,
+        args.val_denoised
     )
 
 
