@@ -46,7 +46,11 @@ n_val = split_info['n_val']
 print(f"Loaded split info: train={n_train}, val={n_val}")
 
 # Load denoised full dataset
+<<<<<<< HEAD
 df_denoised = pd.read_csv(denoised_input)
+=======
+df_denoised = pd.read_csv("train_denoised_v3.csv")
+>>>>>>> b490f70 (Add trained denoiser models and leak-free datasets)
 print(f"Loaded denoised: {len(df_denoised)} rows")
 
 # Validate
@@ -60,5 +64,10 @@ df_denoised_val = df_denoised.iloc[n_train:].copy()
 print(f"Extracted val: {len(df_denoised_val)} rows")
 
 # Save
+<<<<<<< HEAD
 df_denoised_val.to_csv(val_output, index=False)
 print(f"Saved: {val_output}")
+=======
+df_denoised_val.to_csv("val_denoised_v3.csv", index=False)
+print("Saved: val_denoised.csv")
+>>>>>>> b490f70 (Add trained denoiser models and leak-free datasets)

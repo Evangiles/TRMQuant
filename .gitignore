@@ -1,1 +1,63 @@
 __pycache__/
+
+  # Jupyter checkpoints
+  **/.ipynb_checkpoints/
+
+  # CatBoost info
+  catboost_info/
+
+  # Temporary files
+  =*
+  EOF
+
+  git add .gitignore
+
+  # 6. Commit
+  git commit -m "Add trained denoiser models and leak-free datasets
+
+  Trained models:
+  - 7 cluster-specific denoisers (lr=5e-4, ~epoch 10)
+  - Stored in TinyRecursiveModels/trained_models/
+
+  Leak-free datasets:
+  - train_only.csv (80%, 7192 rows) - training set only
+  - val_only.csv (20%, 1798 rows) - validation set only
+  - split_info.json - metadata for reproducibility
+
+  Denoised datasets:
+  - train_denoised_v3.csv - denoised with training stats only
+  - val_denoised.csv - validation portion extracted
+
+  Dependencies:
+  - Updated pyproject.toml and uv.lock
+
+  🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+  Co-Authored-By: Claude <noreply@anthropic.com>"
+
+  # 7. Push
+  git push
+
+
+  # Jupyter checkpoints
+  **/.ipynb_checkpoints/
+
+  # CatBoost info
+  catboost_info/
+
+  # Temporary files
+  =*
+  EOF
+
+  git add .gitignore
+  git commit -m "Add .gitignore for temporary files
+
+  🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+  Co-Authored-By: Claude <noreply@anthropic.com>"
+
+  # Push
+  git push
+
+  이 명령어들을 순서대로 실행하세요!
+

@@ -1,0 +1,7 @@
+{
+  "n_train": 7192,
+  "n_val": 1798,
+  "train_ratio": 0.8,
+  "total_rows": 8990,
+  "split_date": "2025-11-13 01:03:17"
+}
