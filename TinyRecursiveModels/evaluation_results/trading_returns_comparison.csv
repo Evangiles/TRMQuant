@@ -1,0 +1,6 @@
+model,Original_Return,Denoised_Return,Improvement
+CatBoost,0.4105,0.9951,0.5846
+LightGBM,0.4232,1.337,0.9138
+LinearRegression,0.2281,0.5533,0.3252
+Ridge,0.2288,0.5515,0.3228
+XGBoost,0.1092,0.8457,0.7365

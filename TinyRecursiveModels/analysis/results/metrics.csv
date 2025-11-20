@@ -1,0 +1,2 @@
+avg_snr_improvement,avg_corr_original,avg_corr_denoised,avg_ic_original,avg_ic_denoised,ic_improvement_pct,stationary_pct_original,stationary_pct_denoised
+75992.72372619165,0.16608325473239274,0.15185732638363716,0.022244745430823654,0.025890936618838938,16.391247089584144,80.0,85.0

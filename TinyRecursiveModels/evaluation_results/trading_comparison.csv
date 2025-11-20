@@ -1,0 +1,6 @@
+model,Original_Sharpe,Denoised_Sharpe,Improvement,Improvement_%
+CatBoost,0.9373,1.8839,0.9466,100.9901
+LightGBM,1.016,2.4339,1.4179,139.5527
+LinearRegression,0.4059,1.0547,0.6489,159.8718
+Ridge,0.4168,1.0377,0.6208,148.9414
+XGBoost,0.5502,1.6258,1.0756,195.4734
